@@ -1,3 +1,5 @@
+# cLoops2: Full Stack Analysis Tool for Chromatin Interactions
+
 <div align="center">
 
 [![Language](https://img.shields.io/github/languages/top/YaqiangCao/cLoops2)](https://img.shields.io/github/languages/top/YaqiangCao/cLoops2) 
@@ -10,8 +12,6 @@
 
 </div>
 
-<h2 align="center"> cLoops2: full stack analysis tool for chromatin interactions </h2>
-
 <p align="center">
 <img align="center" src="https://github.com/YaqiangCao/cLoops2/blob/master/pngs/FlowChart.png">
 </p>   
@@ -20,18 +20,29 @@
 -------
 -------
 ## Introduction
-cLoops2 is an extension of our previous work, [cLoops](https://github.com/YaqiangCao/cLoops). From loop-calling based on assumption-free clustering to a full suite of analysis tools for 3D genomic interaction data, cLoops2 has been adapted specifically for data such as Hi-TrAC/Trac-looping/ChIA-PET/HiChIP, for which interactions are enriched over the genome through experimental steps. cLoops2 still supports Hi-C -like data. The changes from cLoops to cLoops2 are designed to address challenges around aiming for higher resolutions with the next-generation of genome architecture mapping technologies. 
 
-cLoops2 is designed with respect reference to [bedtools](https://bedtools.readthedocs.io/en/latest/) and [Samtools](http://www.htslib.org/) for command-line style programming. If you have experience with them, you will find cLoops2 easy and efficient to use and combine commands, integrate as steps in your processing pipeline. 
+Welcome to cLoops2! This is a comprehensive analysis tool for 3D genomic interaction data, building upon our previous work [cLoops](https://github.com/YaqiangCao/cLoops). 
+
+cLoops2 has evolved from simple loop-calling based on assumption-free clustering to a full suite of analysis tools for 3D genomic interaction data. It has been specifically optimized for data types such as Hi-TrAC/Trac-looping/ChIA-PET/HiChIP, where interactions are enriched over the genome through experimental steps. cLoops2 also supports Hi-C-like data. The improvements from cLoops to cLoops2 are designed to address challenges in achieving higher resolutions with next-generation genome architecture mapping technologies.
+
+cLoops2 is designed with reference to [bedtools](https://bedtools.readthedocs.io/en/latest/) and [Samtools](http://www.htslib.org/) for command-line style programming. If you have experience with these tools, you will find cLoops2 easy and efficient to use, and you can seamlessly combine commands and integrate them as steps in your processing pipeline. 
 
 Please refer to our [Hi-TrAC method manuscript bioRxiv](https://www.biorxiv.org/content/10.1101/2022.06.01.494329v1) [official version](https://www.nature.com/articles/s41467-022-34276-8), [Hi-TrAC domain-centric analysis manuscript bioRxiv](https://www.biorxiv.org/content/10.1101/2022.07.13.499926v1) [official version](https://academic.oup.com/nar/advance-article/doi/10.1093/nar/gkad378/7161543), and [cLoops2 manuscript bioRxiv](https://www.biorxiv.org/content/10.1101/2021.07.20.453068v1) [official version](https://academic.oup.com/nar/advance-article/doi/10.1093/nar/gkab1233/6470683) for what cLoops2 can do and show. 
+
+## Table of Contents
+
+- [Citation](#citation)
+- [Install](#install)
+- [Basic Usage and Quick Guide](#basic-usage-and-quick-guide)
+- [cLoops2 Main Functions](#cloops2-main-functions)
+- [Input, Intermediate, Output Files](#input-intermediate-output-files)
 
 -------
 -------
 ## Citation
 If you use cLoops2 in your research (the idea, the algorithm, the analysis scripts or the supplemental data), please give us a star on the GitHub repo page and cite our paper as follows:    
 
-- Official verision on NAR: [Yaqiang Cao et al. "cLoops2: a full-stack comprehensive analytical tool for chromatin interactions"](https://academic.oup.com/nar/advance-article/doi/10.1093/nar/gkab1233/6470683)   
+- Official version on NAR: [Yaqiang Cao et al. "cLoops2: a full-stack comprehensive analytical tool for chromatin interactions"](https://academic.oup.com/nar/advance-article/doi/10.1093/nar/gkab1233/6470683)   
 or     
 - Preprint bioRxiv: [Yaqiang Cao et al. "cLoops2: a full-stack comprehensive analytical tool for chromatin interactions"](https://www.biorxiv.org/content/10.1101/2021.07.20.453068v1)   
 
@@ -40,7 +51,7 @@ or
 -------
 ## Install
 #### 1. Easy way through pip for stable version
-Python3 is requried.  
+Python3 is required.  
 ```
 pip install cLoops2
 ```
@@ -58,7 +69,7 @@ python3 setup.py install
 ```
 
 Necessary Python3 third-party packages are listed below, all of which can be installed through conda. If you like to install cLoops2 through the old school way ***python setup.py install***, please install the 3rd dependencies first. 
-```
+```text
 tqdm
 numpy 
 scipy 
@@ -86,7 +97,7 @@ For other kinds of 3D genomic interaction data such as ChIA-PET, Hi-C, and HiChI
 The following example command lines were also recorded in [cLoops2/example/test\_run/run.sh](https://github.com/YaqiangCao/cLoops2/blob/master/example/test_run/run.sh), which can be used to test the main programs of cLoops2 after installation.    
 
 
-### Rountine analysis step 1: get basic statistics of PETs from input BEDPE file
+### Routine analysis step 1: get basic statistics of PETs from input BEDPE file
 ```
 cLoops2 qc -f ../data/GM_Trac1_hg38_chr21_partaa.bedpe.gz,../data/GM_Trac1_hg38_chr21_partab.bedpe.gz -o test -p 2
 ```    
@@ -102,7 +113,7 @@ The informative output is a .txt file with annotation of information as follows.
 | K562_HiTrac_bio1 | 596886    | 591215     | 0.009500977 | 474746                    | 0.8030006   | 116469                      | 0.1969994   | 314420.4126  | 115360                   | 0.242993095 | 226568                         | 0.477240461 | 132818                    | 0.279766444 |
 | K562_HiTrac_bio2 | 413818    | 410415     | 0.008223422 | 326743                    | 0.796128309 | 83672                       | 0.203871691 | 327855.2136  | 68571                    | 0.209862185 | 162132                         | 0.496206499 | 96040                     | 0.293931316 |
 
-### Rountine analysis step 2: pre-process BEDPE file(s) into cLoops2 data
+### Routine analysis step 2: pre-process BEDPE file(s) into cLoops2 data
 ```
 #get directory seperately for GM12878, only target chromosome chr21
 cLoops2 pre -f ../data/GM_HiTrac_bio1.bedpe.gz -o gm_bio1 -c chr21
@@ -121,7 +132,7 @@ For data backup/sharing purposes, the directory can be saved as a .tar.gz file t
 
 If you move the directory or change the files in the directory, please run ***cLoops2 update*** to update the information of petMeta.json, as all ixy files were recorded as absolute paths. 
 
-### Rountine analysis step 3: estimate reasonable contact matrix resolution    
+### Routine analysis step 3: estimate reasonable contact matrix resolution    
 ```
 cLoops2 estRes -d gm -o gm -bs 5000,1000,200 -p 10
 cLoops2 estRes -d k562 -o k562 -bs 5000,1000,200 -p 10
@@ -136,7 +147,7 @@ The main output is a figure as follows.
 <img align="center" width="400" height="275" src="https://github.com/YaqiangCao/cLoops2/blob/master/pngs/gm_estRes.png">
 </p>   
 
-### Rountine analysis step 4: estimate significant interaction distance limitation    
+### Routine analysis step 4: estimate significant interaction distance limitation    
 ```
 cLoops2 estDis -d gm -o gm -bs 1000 -p 10 -plot
 ```
@@ -148,7 +159,7 @@ The main output is a figure as follows. The plot indicates Hi-TrAC data may dete
 </p>   
 
 
-### Rountine analysis step 5: estimate similarities/consistency among replicates 
+### Routine analysis step 5: estimate similarities/consistency among replicates 
 ```
 cLoops2 estSim -ds gm_bio1,gm_bio2,gm,k562_bio1,k562_bio2,k562 -bs 1000 -plot -p 6 -o test_step4
 ```
@@ -157,16 +168,16 @@ cLoops2 estSim -ds gm_bio1,gm_bio2,gm,k562_bio1,k562_bio2,k562 -bs 1000 -plot -p
 </p>   
 
 
-### Rountine analysis step 6:  call peaks    
+### Routine analysis step 6:  call peaks    
 Call peaks can be run on raw data or filtered data (through ***cLoops2 filterPETs***), only using PETs within 1kb. Smaller eps, sharper peaks. Run as PETs or split PETs as single-end reads. 
 
 ```
 cLoops2 callPeaks -d gm -o gm -eps 50,100 -minPts 10 -mcut 1000 -split 
 ```
 
-The main output is a [\_peaks.txt](#_peaks.txt) file, from which contains all important informations for peaks.   
+The main output is a [\_peaks.txt](#_peaks.txt) file, which contains all important information for peaks.   
 
-### Rountine analysis step 7: show aggregated peaks 
+### Routine analysis step 7: show aggregated peaks 
 Check global peaks width and enrichment through aggregation plot. For Hi-TrAC data, we expect high enrichment of signals at peaks.
 ```
 cLoops2 agg -d gm -peaks gm_peaks.bed -o gm -peak_ext 2500 -peak_bins 200 -peak_norm -skipZeros
@@ -175,7 +186,7 @@ cLoops2 agg -d gm -peaks gm_peaks.bed -o gm -peak_ext 2500 -peak_bins 200 -peak_
 <img align="center" width="200" height="500" src="https://github.com/YaqiangCao/cLoops2/blob/master/pngs/gm_aggPeaks.png">
 </p>
 
-### Rountine analysis step 8: call intra-chromosomal loops     
+### Routine analysis step 8: call intra-chromosomal loops     
 Call loops can be run on raw data or filtered data.    
 
 ```
@@ -195,7 +206,7 @@ With the option of ***-hic***, callLoops will not check the peak-like feature fo
 
 Because in cLoops2 the backend clustering algorithm is different from that of cLoops, so even the same parameter may have different results. 
 
-### Rountine analysis step 9: show aggregated loops 
+### Routine analysis step 9: show aggregated loops 
 ```
 cLoops2 agg -d gm -o gm -loops gm_loops.txt -bws ../data/GM12878_ATAC_chr21.bw,../data/GM12878_CTCF_chr21.bw -1D -loop_norm
 
@@ -208,7 +219,7 @@ For Hi-TrAC, we expect the aggregated loops pattern as above:
 - highly enriched signal at the center for loop regions; 
 - relative higher signal from the two anchors, as for Hi-TrAC, anchors are expected to be peaks in the 1D.
 
-### Rountine analysis step 10: call domains 
+### Routine analysis step 10: call domains 
 ```
 cLoops2 callDomains -d gm -o gm -bs 5000 -ws 100000,250000
 ```
@@ -217,7 +228,7 @@ The main output is a [\_domains.txt](#_domains.txt) file.
 
 For Hi-TrAC, called domains are all activate domains. There is a ***-hic*** option for Hi-C like data.
 
-### Rountine analysis step 11: show aggregated domains
+### Routine analysis step 11: show aggregated domains
 ```
 #convert the output segregation score from bedGraph file to bigWig
 bedGraphToBigWig  gm_domains_SS_binSize5.0k_winSize100.0k.bdg ../../data/hg38.chrom.sizes gm_domains_SS_bs5k_ws100k.bw
@@ -234,7 +245,7 @@ For Hi-TrAC, we expect the aggregated domains pattern as above (maybe better cle
 - higher 1D signal than nearby regions;   
 - small domains.  
 
-### Rountine analysis step 12: visualization 
+### Routine analysis step 12: visualization 
 ***cLoops2 plot*** can show the interaction contact matrix (observed, observed/expected, correlation) at any resolution, with genes (-gtf option), 1D annotations (-bws option), domains (-dominas option), loops (-loops option).
 
 #### a.show big regions such as domains
@@ -274,7 +285,7 @@ cLoops2 plot -f gm_filtered/chr21-chr21.ixy -o gm_example -start 46228500 -end 4
 </p>
 
 
-### Rountine analysis step 13: call differential enriched loops for two conditions
+### Routine analysis step 13: call differential enriched loops for two conditions
 ```
 #a. sampling PETs to same/similar depth to call loops with same parameters
 cLoops2 samplePETs -d gm -o gm_samp -tot 780000
@@ -292,7 +303,7 @@ The main output is a [\_dloops.txt](#_dloops.txt) file with three figures. The m
 <img align="center" width="750" height="400" src="https://github.com/YaqiangCao/cLoops2/blob/master/pngs/gm_vs_k562_diffAggLoops.png">
 </p>
 
-### Rountine analysis step 14: convert cLoops2 data to others  
+### Routine analysis step 14: convert cLoops2 data to others  
 More formats will be added if actually needed.  
 #### 1. to BED file 
 ```
@@ -314,7 +325,7 @@ cLoops2 dump -d gm -o gm -bdg_pe
 ```
 cLoops2 dump -d gm -o gm -washU
 ```
-#### 6. to HIC file, juicer\_tools need in command line envrionment 
+#### 6. to HIC file, juicer_tools needed in command line environment 
 ```
 cLoops2 dump -d gm -o gm -hic -hic_org hg38 -hic_res 200000,25000,5000
 ```
@@ -323,7 +334,7 @@ cLoops2 dump -d gm -o gm -hic -hic_org hg38 -hic_res 200000,25000,5000
 cLoops2 dump -d gm -mat -o gm -mat_res 10000 -mat_chrom chr21-chr21 -mat_start 36000000 -mat_end 40000000 -log -norm -corr
 ```
 
-### Rountine analysis step 15: quantify features from cLoops2 data
+### Routine analysis step 15: quantify features from cLoops2 data
 #### 1. quantify GM12878 peaks in K562 data
 ```
 cLoops2 quant -d k562 -peaks gm_peaks.bed -o k562_gm 
@@ -338,7 +349,7 @@ cLoops2 quant -d k562 -loops gm_loops.txt -o k562_gm
 cLoops2 quant -d k562 -domains gm_domains.txt -o k562_gm -domain_bs 5000 -domain_ws 100000
 ```
 
-### Rountine analysis step 16: montage analysis of interactions among distal genomic regions 
+### Routine analysis step 16: montage analysis of interactions among distal genomic regions 
 #### 1. show all interactions among enhancers and promoters 
 ```
 cLoops2 montage -f ./gm_samp/chr21-chr21.ixy -bed ../data/runx1.bed -o gm_runx1_all -ext 2 -simple -ppmw 0.05 -vmax 500 
@@ -356,13 +367,13 @@ GM12878             |  K562
 :-------------------------:|:-------------------------:
 ![](https://github.com/YaqiangCao/cLoops2/blob/master/pngs/gm_runx1_vp_rehoboam.png)  |  ![](https://github.com/YaqiangCao/cLoops2/blob/master/pngs/k562_runx1_vp_rehoboam.png)
 
-### Rountine analysis step 17: annotate loops to genes and find a gene's all interacting enhancers  
+### Routine analysis step 17: annotate loops to genes and find a gene's all interacting enhancers  
 ```
 cLoops2 anaLoops -loop gm_loops.txt -o gm_loops -gtf ../data/gencode_v30_chr21.gtf -net
 ```
 There will be 5 files for the ***-gtf -net*** option as following. 
 - [\_LoopsGtfAno.txt](#_LoopsGtfAno.txt) file for main annotations. Loop anchors were assigned to gene promoters and enhancers based on distance. If only run with ***-gtf*** option, this file is the only result. 
-- [\_mergedAnchors.txt](#_mergedAnchors.txt) file for merged anchors. There will also be a \_nergedAnchors.bed file converted as bed file for convenience loading to genome browser. 
+- [\_mergedAnchors.txt](#_mergedAnchors.txt) file for merged anchors. There will also be a \_mergedAnchors.bed file converted as bed file for convenience loading to genome browser. 
 - [\_loop2anchors.txt](#_loop2anchors.txt) file for loops to merged anchors. 
 - [\_targets.txt](#_targets.txt) file for every promoter's interacting enhancer and promoter. If there are >=2 enhancers/promoters linked, [HITS algorithm](https://en.wikipedia.org/wiki/HITS_algorithm) will be used to find the hubs. Montage analysis can be followed to show interactions for a specific promoter. 
 - \_ep\_net.sif: [SIF file](https://cytoscape.org/manual/Cytoscape2_6Manual.html#SIF%20Format) for interactions networks of annotated enhancers and promoters, can be loaded in Cytoscape for visualization. Can be further used to analyze the topological structures of enhancers and promoters. 
@@ -380,7 +391,7 @@ python plotNetExample.py
 ------
 ## cLoops2 Main Functions
 Run ***cLoops2*** or ***cLoops2 -h*** can show the main functions of cLoops2 with short descriptions and examples.     
-```
+```text
 An enhanced, accurate and flexible peak/domain/loop-calling and analysis tool 
 for 3D genomic interaction data.
 
@@ -389,7 +400,7 @@ Available sub-commands are:
     qc: quality control of BEDPE files before analysis.
     pre: preprocess input BEDPE files into cLoops2 data.
     update: update cLoops2 data files locations.
-    combine: combine multiple cLooops2 data directories.
+    combine: combine multiple cLoops2 data directories.
     dump: convert cLoops2 data files to others (BEDPE, HIC, washU, bedGraph and
           contact matrix)
     estEps: estimate eps using Gaussian mixture models or k-distance plot.
@@ -412,7 +423,7 @@ Available sub-commands are:
     agg: aggregated feature analysis and plots, features can be peaks, view 
          points, loops and domains.
     quant: quantify peaks, loops and domains.
-    anaLoops: anotate loops for target genes.
+    anaLoops: annotate loops for target genes.
     findTargets: find target genes of genomic regions through networks from 
                  anaLoops.
 
@@ -462,7 +473,7 @@ optional arguments:
   -cut CUT    Distance cutoff to filter cis PETs, only keep PETs with distance
               >=cut. Default is 0, no filtering.
   -mcut MCUT  Keep the PETs with distance <=mcut. Default is -1, no filtering.
-  -v          Show cLoops2 verison number and exit.
+  -v          Show cLoops2 version number and exit.
   ---         Following are sub-commands specific options. This option just show
               version of cLoops2.
 
@@ -473,7 +484,7 @@ caoyaqiang0410@gmail.com or yaqiang.cao@nih.gov. Thank you.
 ------
 ### 1. Quality control for BEDPE files
 Run **cLoops2 qc -h** to see details. 
-```
+```text
 Get the basic quality control statistical information from interaction BEDPE
 files.
 
@@ -492,7 +503,7 @@ optional arguments:
   -cut CUT    Distance cutoff to filter cis PETs, only keep PETs with distance
               >=cut. Default is 0, no filtering.
   -mcut MCUT  Keep the PETs with distance <=mcut. Default is -1, no filtering.
-  -v          Show cLoops2 verison number and exit.
+  -v          Show cLoops2 version number and exit.
   ---         Following are sub-commands specific options. This option just show
               version of cLoops2.
   -f FNIN     Input BEDPE file(s), .bedpe and .bedpe.gz are both suitable. Multiple
@@ -535,7 +546,7 @@ optional arguments:
   -cut CUT              Distance cutoff to filter cis PETs, only keep PETs with distance
                         >=cut. Default is 0, no filtering.
   -mcut MCUT            Keep the PETs with distance <=mcut. Default is -1, no filtering.
-  -v                    Show cLoops2 verison number and exit.
+  -v                    Show cLoops2 version number and exit.
   ---                   Following are sub-commands specific options. This option just show
                         version of cLoops2.
   -f FNIN               Input BEDPE or PAIR file(s), .bedpe and .bedpe.gz are both suitable.
@@ -578,7 +589,7 @@ optional arguments:
   -cut CUT    Distance cutoff to filter cis PETs, only keep PETs with distance
               >=cut. Default is 0, no filtering.
   -mcut MCUT  Keep the PETs with distance <=mcut. Default is -1, no filtering.
-  -v          Show cLoops2 verison number and exit.
+  -v          Show cLoops2 version number and exit.
   ---         Following are sub-commands specific options. This option just show
               version of cLoops2.
 ```
@@ -654,7 +665,7 @@ optional arguments:
   -cut CUT              Distance cutoff to filter cis PETs, only keep PETs with distance
                         >=cut. Default is 0, no filtering.
   -mcut MCUT            Keep the PETs with distance <=mcut. Default is -1, no filtering.
-  -v                    Show cLoops2 verison number and exit.
+  -v                    Show cLoops2 version number and exit.
   ---                   Following are sub-commands specific options. This option just show
                         version of cLoops2.
   -bed                  Convert data to single-end BED file.
@@ -748,7 +759,7 @@ optional arguments:
   -cut CUT             Distance cutoff to filter cis PETs, only keep PETs with distance
                        >=cut. Default is 0, no filtering.
   -mcut MCUT           Keep the PETs with distance <=mcut. Default is -1, no filtering.
-  -v                   Show cLoops2 verison number and exit.
+  -v                   Show cLoops2 version number and exit.
   ---                  Following are sub-commands specific options. This option just show
                        version of cLoops2.
   -fixy FIXY           Assign the .ixy file to estimate eps inside of the whole directory
@@ -797,7 +808,7 @@ optional arguments:
   -cut CUT     Distance cutoff to filter cis PETs, only keep PETs with distance
                >=cut. Default is 0, no filtering.
   -mcut MCUT   Keep the PETs with distance <=mcut. Default is -1, no filtering.
-  -v           Show cLoops2 verison number and exit.
+  -v           Show cLoops2 version number and exit.
   ---          Following are sub-commands specific options. This option just show
                version of cLoops2.
   -bs BINSIZE  Candidate contact matrix resolution (bin size) to estimate signal
@@ -827,7 +838,7 @@ optional arguments:
   -cut CUT     Distance cutoff to filter cis PETs, only keep PETs with distance
                >=cut. Default is 0, no filtering.
   -mcut MCUT   Keep the PETs with distance <=mcut. Default is -1, no filtering.
-  -v           Show cLoops2 verison number and exit.
+  -v           Show cLoops2 version number and exit.
   ---          Following are sub-commands specific options. This option just show
                version of cLoops2.
   -c CHROMS    Whether to process limited chroms, specify it as chr1,chr2,chr3, 
@@ -881,7 +892,7 @@ optional arguments:
   -cut CUT        Distance cutoff to filter cis PETs, only keep PETs with distance
                   >=cut. Default is 0, no filtering.
   -mcut MCUT      Keep the PETs with distance <=mcut. Default is -1, no filtering.
-  -v              Show cLoops2 verison number and exit.
+  -v              Show cLoops2 version number and exit.
   ---             Following are sub-commands specific options. This option just show
                   version of cLoops2.
   -peaks FBED     BED file of genomic features (such as promoters, enhancers, ChIP-seq,
@@ -932,7 +943,7 @@ optional arguments:
   -cut CUT    Distance cutoff to filter cis PETs, only keep PETs with distance
               >=cut. Default is 0, no filtering.
   -mcut MCUT  Keep the PETs with distance <=mcut. Default is -1, no filtering.
-  -v          Show cLoops2 verison number and exit.
+  -v          Show cLoops2 version number and exit.
   ---         Following are sub-commands specific options. This option just show
               version of cLoops2.
   -tot TOT    Target total number of PETs.
@@ -1008,7 +1019,7 @@ optional arguments:
   -cut CUT            Distance cutoff to filter cis PETs, only keep PETs with distance
                       >=cut. Default is 0, no filtering.
   -mcut MCUT          Keep the PETs with distance <=mcut. Default is -1, no filtering.
-  -v                  Show cLoops2 verison number and exit.
+  -v                  Show cLoops2 version number and exit.
   ---                 Following are sub-commands specific options. This option just show
                       version of cLoops2.
   -eps EPS            Distance that defines two points (PETs) being neighbors, eps in
@@ -1114,7 +1125,7 @@ optional arguments:
   -cut CUT        Distance cutoff to filter cis PETs, only keep PETs with distance
                   >=cut. Default is 0, no filtering.
   -mcut MCUT      Keep the PETs with distance <=mcut. Default is -1, no filtering.
-  -v              Show cLoops2 verison number and exit.
+  -v              Show cLoops2 version number and exit.
   ---             Following are sub-commands specific options. This option just show
                   version of cLoops2.
   -eps EPS        Distance that defines two points (PETs) being neighbors, eps in
@@ -1197,7 +1208,7 @@ optional arguments:
   -cut CUT              Distance cutoff to filter cis PETs, only keep PETs with distance
                         >=cut. Default is 0, no filtering.
   -mcut MCUT            Keep the PETs with distance <=mcut. Default is -1, no filtering.
-  -v                    Show cLoops2 verison number and exit.
+  -v                    Show cLoops2 version number and exit.
   ---                   Following are sub-commands specific options. This option just show
                         version of cLoops2.
   -tloop TLOOP          The target loops in _loop.txt file called by cLoops2.
@@ -1259,7 +1270,7 @@ optional arguments:
   -cut CUT     Distance cutoff to filter cis PETs, only keep PETs with distance
                >=cut. Default is 0, no filtering.
   -mcut MCUT   Keep the PETs with distance <=mcut. Default is -1, no filtering.
-  -v           Show cLoops2 verison number and exit.
+  -v           Show cLoops2 version number and exit.
   ---          Following are sub-commands specific options. This option just show
                version of cLoops2.
   -bs BINSIZE  Candidate contact matrix resolution (bin size) to call domains. A
@@ -1333,7 +1344,7 @@ optional arguments:
   -cut CUT              Distance cutoff to filter cis PETs, only keep PETs with distance
                         >=cut. Default is 0, no filtering.
   -mcut MCUT            Keep the PETs with distance <=mcut. Default is -1, no filtering.
-  -v                    Show cLoops2 verison number and exit.
+  -v                    Show cLoops2 version number and exit.
   ---                   Following are sub-commands specific options. This option just show
                         version of cLoops2.
   -f FIXY               Input .ixy file generated by cLoops2 pre. If not assigned, no heatmaps
@@ -1449,7 +1460,7 @@ optional arguments:
   -cut CUT       Distance cutoff to filter cis PETs, only keep PETs with distance
                  >=cut. Default is 0, no filtering.
   -mcut MCUT     Keep the PETs with distance <=mcut. Default is -1, no filtering.
-  -v             Show cLoops2 verison number and exit.
+  -v             Show cLoops2 version number and exit.
   ---            Following are sub-commands specific options. This option just show
                  version of cLoops2.
   -f FIXY        Input .ixy file generated by cLoops2 pre.
@@ -1553,7 +1564,7 @@ optional arguments:
   -cut CUT              Distance cutoff to filter cis PETs, only keep PETs with distance
                         >=cut. Default is 0, no filtering.
   -mcut MCUT            Keep the PETs with distance <=mcut. Default is -1, no filtering.
-  -v                    Show cLoops2 verison number and exit.
+  -v                    Show cLoops2 version number and exit.
   ---                   Following are sub-commands specific options. This option just show
                         version of cLoops2.
   -peaks PEAKF          The .bed file for peaks-centric aggregation analysis.
@@ -1637,7 +1648,7 @@ optional arguments:
   -cut CUT              Distance cutoff to filter cis PETs, only keep PETs with distance
                         >=cut. Default is 0, no filtering.
   -mcut MCUT            Keep the PETs with distance <=mcut. Default is -1, no filtering.
-  -v                    Show cLoops2 verison number and exit.
+  -v                    Show cLoops2 version number and exit.
   ---                   Following are sub-commands specific options. This option just show
                         version of cLoops2.
   -peaks PEAKF          The .bed file for peaks-centric quantification.
@@ -1697,7 +1708,7 @@ optional arguments:
   -cut CUT      Distance cutoff to filter cis PETs, only keep PETs with distance
                 >=cut. Default is 0, no filtering.
   -mcut MCUT    Keep the PETs with distance <=mcut. Default is -1, no filtering.
-  -v            Show cLoops2 verison number and exit.
+  -v            Show cLoops2 version number and exit.
   ---           Following are sub-commands specific options. This option just show
                 version of cLoops2.
   -loops FLOOP  The _loop.txt file generated by cLoops2 callLoops or callDiffLoops.
@@ -1737,7 +1748,7 @@ optional arguments:
   -cut CUT    Distance cutoff to filter cis PETs, only keep PETs with distance
               >=cut. Default is 0, no filtering.
   -mcut MCUT  Keep the PETs with distance <=mcut. Default is -1, no filtering.
-  -v          Show cLoops2 verison number and exit.
+  -v          Show cLoops2 version number and exit.
   ---         Following are sub-commands specific options. This option just show
               version of cLoops2.
   -net FNET   The _ep_net.sif file generated by cLoops2 anaLoops.
