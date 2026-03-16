@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+
+# Copy this file to pipeline.config.sh and adjust paths/parameters for your project.
+
+PROJECT_NAME="cloops2_demo"
+OUTPUT_ROOT="./results/${PROJECT_NAME}"
+THREADS=4
+TARGET_CHROMS="chr21"
+
+# Input BEDPE files.
+declare -A SAMPLE_FILES=(
+  [gm_bio1]="../data/GM_HiTrac_bio1.bedpe.gz"
+  [gm_bio2]="../data/GM_HiTrac_bio2.bedpe.gz"
+  [k562_bio1]="../data/K562_HiTrac_bio1.bedpe.gz"
+  [k562_bio2]="../data/K562_HiTrac_bio2.bedpe.gz"
+)
+
+# Logical groups built from one or more samples.
+declare -A GROUP_REPLICATES=(
+  [gm]="gm_bio1,gm_bio2"
+  [k562]="k562_bio1,k562_bio2"
+)
+
+# Build strategy per group:
+# - pre: run `cLoops2 pre` directly on all group files
+# - combine: preprocess replicates separately, then `cLoops2 combine`
+declare -A GROUP_BUILD_MODE=(
+  [gm]="pre"
+  [k562]="combine"
+)
+
+# Stage toggles.
+ENABLE_CLEAN=0
+ENABLE_QC=1
+ENABLE_PRE=1
+ENABLE_ESTIMATE=1
+ENABLE_CALLING=1
+ENABLE_VIS=1
+ENABLE_COMPARE=1
+ENABLE_EXPORT=1
+ENABLE_QUANT=1
+ENABLE_ANNOTATION=1
+ENABLE_EXTRA_ANALYSIS=0
+
+# Main analysis target. Most single-sample visualizations/calls use this group.
+PRIMARY_GROUP="gm"
+SECONDARY_GROUP="k562"
+
+# Reference files used by optional stages.
+CHROM_SIZES="../../data/hg38.chrom.sizes"
+GTF_FILE="../data/gencode_v30_chr21.gtf"
+BW_CTCF="../data/GM12878_CTCF_chr21.bw"
+BW_ATAC="../data/GM12878_ATAC_chr21.bw"
+BED_ENHANCER="../data/GM12878_RoadMap_hg38_Enh_chr21.bed"
+BED_TSS="../data/GM12878_RoadMap_hg38_Tss_chr21.bed"
+MONTAGE_BED="../data/runx1.bed"
+
+# Core command parameters.
+QC_ARGS="-p ${THREADS}"
+PRE_ARGS="-c ${TARGET_CHROMS}"
+COMBINE_ARGS="-keep 1"
+EST_RES_ARGS="-bs 5000,1000,200 -p 10"
+EST_DIS_ARGS="-bs 1000 -p 10 -plot"
+EST_SIM_ARGS="-bs 1000 -plot -p 6"
+CALL_PEAKS_ARGS="-eps 50,100 -minPts 10 -mcut 1000 -split"
+CALL_LOOPS_ARGS="-eps 200,500,1000 -minPts 10 -w -j"
+CALL_DOMAINS_ARGS="-bs 5000 -ws 100000,250000"
+SAMPLE_PETS_TOTAL=780000
+SAMPLE_PETS_ARGS=""
+CALL_DIFF_LOOPS_ARGS="-j -w"
+QUANT_PEAKS_ARGS=""
+QUANT_LOOPS_ARGS=""
+QUANT_DOMAIN_ARGS="-domain_bs 5000 -domain_ws 100000"
+ANNOTATION_ARGS="-net -pdis 2000"
+
+# Visualization and aggregation parameters.
+AGG_PEAK_ARGS="-peak_ext 2500 -peak_bins 200 -peak_norm -skipZeros"
+AGG_VIEWPOINT_ARGS="-viewPointBs 1000 -viewPointDown 30000 -viewPointUp 20000 -1D"
+AGG_LOOP_ARGS="-1D -loop_norm"
+AGG_TWO_ANCHOR_ARGS="-1D -twoAnchor_ext 0.5"
+AGG_DOMAIN_ARGS="-1D"
+
+DOMAIN_BW_100K="domains_ss_bs5k_ws100k.bw"
+DOMAIN_BW_250K="domains_ss_bs5k_ws250k.bw"
+DOMAIN_BDG_100K="domains_SS_binSize5.0k_winSize100.0k.bdg"
+DOMAIN_BDG_250K="domains_SS_binSize5.0k_winSize250.0k.bdg"
+
+PLOT_DOMAIN_ARGS="-bs 5000 -start 35800000 -end 36700000 -log -1D -corr"
+PLOT_LOOP_ARGS="-bs 500 -start 38752604 -end 38839334 -triu -1D -m obs -log -vmax 1"
+PLOT_FILTERED_ARGS="-bs 500 -start 38752604 -end 38839334 -triu -log -1D"
+PLOT_FILTERED_ARCH_ARGS="-start 46228500 -end 46290000 -1D -arch -aw 0.5"
+FILTER_PETS_ARGS=""
+
+MONTAGE_ALL_ARGS="-ext 2 -simple -ppmw 0.05 -vmax 500"
+MONTAGE_VIEWPOINT_ARGS="-ext 2 -simple -ppmw 0.05 -vmax 500 -vp Promoter,E19"
+
+# Dump toggles.
+DUMP_BED=1
+DUMP_BEDPE=1
+DUMP_BDG=1
+DUMP_WASHU=1
+DUMP_HIC=1
+DUMP_MATRIX=1
+DUMP_BED_ARGS=""
+DUMP_BEDPE_ARGS=""
+DUMP_BDG_ARGS=""
+DUMP_WASHU_ARGS=""
+DUMP_HIC_ARGS="-hic_org hg38 -hic_res 200000,25000,5000"
+DUMP_MATRIX_ARGS="-mat_res 10000 -mat_chrom chr21-chr21 -mat_start 36000000 -mat_end 40000000 -log -norm -corr"
+
+# Optional custom hooks. Commands run after a stage finishes.
+POST_ANNOTATION_HOOK=""
+POST_EXTRA_ANALYSIS_HOOK=""

@@ -1,0 +1,3 @@
+snakemake_core/.snakemake/
+snakemake_core/results_snakemake/
+snakemake_core/cLoops2.log

@@ -1,0 +1,105 @@
+project_name: "cloops2_core"
+output_root: "results_snakemake/cloops2_core"
+cloops2_cmd: "conda run -n cLoops2 cLoops2"
+species: "human"
+
+chrom_whitelist:
+  human: "chr1,chr2,chr3,chr4,chr5,chr6,chr7,chr8,chr9,chr10,chr11,chr12,chr13,chr14,chr15,chr16,chr17,chr18,chr19,chr20,chr21,chr22,chrX,chrY"
+  mouse: "chr1,chr2,chr3,chr4,chr5,chr6,chr7,chr8,chr9,chr10,chr11,chr12,chr13,chr14,chr15,chr16,chr17,chr18,chr19,chrX,chrY"
+
+samples:
+  gm_bio1: "../../data/GM_HiTrac_bio1.bedpe.gz"
+  gm_bio2: "../../data/GM_HiTrac_bio2.bedpe.gz"
+  k562_bio1: "../../data/K562_HiTrac_bio1.bedpe.gz"
+  k562_bio2: "../../data/K562_HiTrac_bio2.bedpe.gz"
+
+groups:
+  gm:
+    replicates: ["gm_bio1", "gm_bio2"]
+    build_mode: "pre"
+  k562:
+    replicates: ["k562_bio1", "k562_bio2"]
+    build_mode: "combine"
+
+primary_group: "gm"
+secondary_group: "k562"
+calling_groups: ["gm"]
+target_chroms: "chr21"
+view_chrom: "chr21"
+
+normalization:
+  enabled: true
+  groups: ["gm", "k562"]
+  output_suffix: "_norm"
+  mode: "min_unique_pets"
+
+compare:
+  enabled: true
+  montage_enabled: false
+  groups: ["gm", "k562"]
+  output_suffix: "_cmp"
+  mode: "min_unique_pets"
+
+vis:
+  enabled: true
+  plot_enabled: false
+
+annotation:
+  enabled: true
+
+plot_regions:
+  domain:
+    chrom: "chr21"
+    start: 35800000
+    end: 36700000
+    bs: 5000
+  loop:
+    chrom: "chr21"
+    start: 38752604
+    end: 38839334
+    bs: 500
+  filtered:
+    chrom: "chr21"
+    start: 38752604
+    end: 38839334
+    bs: 500
+  arch:
+    chrom: "chr21"
+    start: 46228500
+    end: 46290000
+
+references:
+  chrom_sizes: "../../data/hg38.chrom.sizes"
+  gtf: "../../data/gencode_v30_chr21.gtf"
+  bw_ctcf: "../../data/GM12878_CTCF_chr21.bw"
+  bw_atac: "../../data/GM12878_ATAC_chr21.bw"
+  bed_enhancer: "../../data/GM12878_RoadMap_hg38_Enh_chr21.bed"
+  bed_tss: "../../data/GM12878_RoadMap_hg38_Tss_chr21.bed"
+  montage_bed: "../../data/runx1.bed"
+
+params:
+  qc: "-p 4"
+  pre_extra: ""
+  combine: "-keep 1"
+  sample_pets: "-p 4"
+  est_res: "-bs 5000,1000,200 -p 10"
+  est_dis: "-bs 1000 -p 10 -plot"
+  est_sim: "-bs 1000 -plot -p 6"
+  call_peaks: "-eps 50,100 -minPts 10 -mcut 1000 -split"
+  call_loops: "-eps 200,500,1000 -minPts 10 -w -j"
+  call_domains: "-bs 5000 -ws 100000,250000"
+  compare_sample_pets: "-p 4"
+  compare_call_loops: "-eps 200,500,1000 -minPts 10 -w -j"
+  call_diff_loops: "-j -w"
+  montage_all: "-ext 2 -simple -ppmw 0.05 -vmax 500"
+  montage_viewpoint: "-ext 2 -simple -ppmw 0.05 -vmax 500 -vp Promoter,E19"
+  agg_peak: "-peak_ext 2500 -peak_bins 200 -peak_norm -skipZeros"
+  agg_viewpoint: "-viewPointBs 1000 -viewPointDown 30000 -viewPointUp 20000 -1D"
+  agg_loop: "-1D -loop_norm"
+  agg_domain: "-1D"
+  filter_pets: ""
+  annotation: "-net"
+  plot_domain_extra: "-log -1D -corr"
+  plot_loop_extra: "-triu -1D -m obs -log -vmax 1"
+  plot_filtered_extra: "-triu -log -1D"
+  plot_arch_extra: "-1D -arch -aw 0.5"
