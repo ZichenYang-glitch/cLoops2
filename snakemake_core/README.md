@@ -15,8 +15,8 @@
 
 ## 文件
 
-- [Snakefile](/home/irenadler/cLoops2/example/test_run/snakemake_core/Snakefile)
-- [config.yaml.example](/home/irenadler/cLoops2/example/test_run/snakemake_core/config.yaml.example)
+- [Snakefile](/home/irenadler/cLoops2/snakemake_core/Snakefile)
+- [config.yaml.example](/home/irenadler/cLoops2/snakemake_core/config.yaml.example)
 
 ## 当前能力
 
@@ -48,7 +48,7 @@
 
 ## 配置方式
 
-目录里已经给了一份可直接修改的 [config.yaml](/home/irenadler/cLoops2/example/test_run/snakemake_core/config.yaml)，模板保留在 [config.yaml.example](/home/irenadler/cLoops2/example/test_run/snakemake_core/config.yaml.example)。
+目录里已经给了一份可直接修改的 [config.yaml](/home/irenadler/cLoops2/snakemake_core/config.yaml)，模板保留在 [config.yaml.example](/home/irenadler/cLoops2/snakemake_core/config.yaml.example)。
 
 如果你想从模板重建：
 

@@ -8,10 +8,10 @@ chrom_whitelist:
   mouse: "chr1,chr2,chr3,chr4,chr5,chr6,chr7,chr8,chr9,chr10,chr11,chr12,chr13,chr14,chr15,chr16,chr17,chr18,chr19,chrX,chrY"
 
 samples:
-  gm_bio1: "../../data/GM_HiTrac_bio1.bedpe.gz"
-  gm_bio2: "../../data/GM_HiTrac_bio2.bedpe.gz"
-  k562_bio1: "../../data/K562_HiTrac_bio1.bedpe.gz"
-  k562_bio2: "../../data/K562_HiTrac_bio2.bedpe.gz"
+  gm_bio1: "../example/data/GM_HiTrac_bio1.bedpe.gz"
+  gm_bio2: "../example/data/GM_HiTrac_bio2.bedpe.gz"
+  k562_bio1: "../example/data/K562_HiTrac_bio1.bedpe.gz"
+  k562_bio2: "../example/data/K562_HiTrac_bio2.bedpe.gz"
 
 groups:
   gm:
@@ -69,13 +69,13 @@ plot_regions:
     end: 46290000
 
 references:
-  chrom_sizes: "../../data/hg38.chrom.sizes"
-  gtf: "../../data/gencode_v30_chr21.gtf"
-  bw_ctcf: "../../data/GM12878_CTCF_chr21.bw"
-  bw_atac: "../../data/GM12878_ATAC_chr21.bw"
-  bed_enhancer: "../../data/GM12878_RoadMap_hg38_Enh_chr21.bed"
-  bed_tss: "../../data/GM12878_RoadMap_hg38_Tss_chr21.bed"
-  montage_bed: "../../data/runx1.bed"
+  chrom_sizes: "../data/hg38.chrom.sizes"
+  gtf: "../example/data/gencode_v30_chr21.gtf"
+  bw_ctcf: "../example/data/GM12878_CTCF_chr21.bw"
+  bw_atac: "../example/data/GM12878_ATAC_chr21.bw"
+  bed_enhancer: "../example/data/GM12878_RoadMap_hg38_Enh_chr21.bed"
+  bed_tss: "../example/data/GM12878_RoadMap_hg38_Tss_chr21.bed"
+  montage_bed: "../example/data/runx1.bed"
 
 params:
   qc: "-p 4"
