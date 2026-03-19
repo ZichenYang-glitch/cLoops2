@@ -130,18 +130,6 @@ def compare_group_name(group):
     return f"{group}{COMPARE_SUFFIX}"
 
 
-def compare_dataset_dir(group):
-    return dataset_dir(compare_group_name(group))
-
-
-def compare_meta_file(group):
-    return meta_file(compare_group_name(group))
-
-
-def compare_done(group):
-    return state_file("compare", f"{group}.done")
-
-
 def compare_loop_prefix(group):
     return report_prefix(compare_group_name(group))
 
@@ -194,6 +182,16 @@ def sample_dirs_csv(sample_names):
     return ",".join(dataset_dir(sample) for sample in sample_names)
 
 
+def million_floor_target(counts):
+    min_count = min(counts)
+    target = (min_count // 1000000) * 1000000
+    if target <= 0:
+        raise ValueError(
+            f"minimum Unique PETs is {min_count}, rounded-to-million target becomes 0 and cannot be used for samplePETs"
+        )
+    return target
+
+
 SAMPLE_PRE_MARKERS = [sample_done(sample) for sample in ALL_SAMPLES]
 GROUP_MARKERS = [group_done(group) for group in ALL_GROUPS]
 EST_RES_MARKERS = [est_res_done(group) for group in ALL_GROUPS]
@@ -202,13 +200,10 @@ CALL_LOOP_OUTPUTS = [f"{report_prefix(group)}_loops.txt" for group in CALLING_GR
 CALL_DOMAIN_OUTPUTS = [f"{report_prefix(group)}_domains.bed" for group in CALLING_GROUPS]
 NORMALIZE_TARGET_FILE = state_file("normalize", "target_unique_pets.txt")
 NORMALIZE_MARKERS = [normalize_done(group) for group in NORMALIZE_GROUPS] if NORMALIZE_ENABLED else []
-COMPARE_TARGET_FILE = state_file("compare", "target_unique_pets.txt")
-COMPARE_MARKERS = [compare_done(group) for group in COMPARE_GROUPS] if COMPARE_ENABLED else []
 COMPARE_LOOP_OUTPUTS = [compare_loop_file(group) for group in COMPARE_GROUPS] if COMPARE_ENABLED else []
 COMPARE_FINAL_OUTPUTS = (
     [compare_diff_done()] +
     ([vis_done("montage_all"), vis_done("montage_viewpoint")] if COMPARE_MONTAGE_ENABLED else []) +
-    COMPARE_MARKERS +
     COMPARE_LOOP_OUTPUTS
 ) if COMPARE_ENABLED else []
 VIS_OUTPUTS = [
@@ -345,7 +340,7 @@ rule normalize_target_depth:
             with open(path) as fh:
                 meta = json.load(fh)
             counts.append(int(meta["Unique PETs"]))
-        Path(output[0]).write_text(str(min(counts)))
+        Path(output[0]).write_text(str(million_floor_target(counts)))
 
 
 rule normalize_group:
@@ -529,65 +524,15 @@ rule call_domains:
         """
 
 
-rule compare_target_depth:
-    input:
-        lambda wc: [analysis_meta_file(group) for group in COMPARE_GROUPS]
-    output:
-        COMPARE_TARGET_FILE
-    run:
-        ensure_parent(output[0])
-        if not COMPARE_ENABLED:
-            Path(output[0]).write_text("")
-            return
-        if COMPARE_MODE != "min_unique_pets":
-            raise ValueError(f"unsupported compare mode: {COMPARE_MODE}")
-        counts = []
-        for path in input:
-            with open(path) as fh:
-                meta = json.load(fh)
-            counts.append(int(meta["Unique PETs"]))
-        Path(output[0]).write_text(str(min(counts)))
-
-
-rule compare_sample_group:
-    wildcard_constraints:
-        group=COMPARE_GROUP_PATTERN
-    input:
-        meta=lambda wc: analysis_meta_file(wc.group),
-        target=COMPARE_TARGET_FILE
-    output:
-        touch(compare_done("{group}")),
-        compare_meta_file("{group}")
-    params:
-        indir=lambda wc: analysis_dataset_dir(wc.group),
-        outdir=lambda wc: compare_dataset_dir(wc.group),
-        args=lambda wc: PARAMS.get("compare_sample_pets", ""),
-        cmd=CLOOPS2_CMD
-    log:
-        os.path.join(LOG_DIR, "compare", "{group}.samplePETs.log")
-    run:
-        ensure_parent(output[0])
-        ensure_parent(output[1])
-        ensure_parent(log[0])
-        target = Path(input.target).read_text().strip()
-        shell(
-            r'''
-            mkdir -p "{params.outdir}"
-            {params.cmd} samplePETs -d "{params.indir}" -o "{params.outdir}" -tot "{target}" {params.args} > "{log}" 2>&1
-            touch "{output[0]}"
-            '''
-        )
-
-
 rule compare_call_loops:
     wildcard_constraints:
         group=COMPARE_GROUP_PATTERN
     input:
-        lambda wc: compare_meta_file(wc.group)
+        lambda wc: analysis_meta_file(wc.group)
     output:
         compare_loop_file("{group}")
     params:
-        data=lambda wc: compare_dataset_dir(wc.group),
+        data=lambda wc: analysis_dataset_dir(wc.group),
         prefix=lambda wc: compare_loop_prefix(wc.group),
         args=lambda wc: PARAMS.get("compare_call_loops", ""),
         cmd=CLOOPS2_CMD
@@ -602,15 +547,15 @@ rule compare_call_loops:
 
 rule call_diff_loops:
     input:
-        tmeta=compare_meta_file(PRIMARY_GROUP),
-        cmeta=compare_meta_file(SECONDARY_GROUP),
+        tmeta=analysis_meta_file(PRIMARY_GROUP),
+        cmeta=analysis_meta_file(SECONDARY_GROUP),
         tloop=compare_loop_file(PRIMARY_GROUP),
         cloop=compare_loop_file(SECONDARY_GROUP)
     output:
         touch(compare_diff_done())
     params:
-        td=compare_dataset_dir(PRIMARY_GROUP),
-        cd=compare_dataset_dir(SECONDARY_GROUP),
+        td=analysis_dataset_dir(PRIMARY_GROUP),
+        cd=analysis_dataset_dir(SECONDARY_GROUP),
         prefix=f"{report_prefix(PRIMARY_GROUP)}_vs_{SECONDARY_GROUP}",
         args=PARAMS.get("call_diff_loops", ""),
         cmd=CLOOPS2_CMD
@@ -626,13 +571,13 @@ rule call_diff_loops:
 
 rule montage_all:
     input:
-        compare_meta_file(PRIMARY_GROUP),
-        compare_meta_file(SECONDARY_GROUP)
+        analysis_meta_file(PRIMARY_GROUP),
+        analysis_meta_file(SECONDARY_GROUP)
     output:
         touch(vis_done("montage_all"))
     params:
-        pfixy=os.path.join(compare_dataset_dir(PRIMARY_GROUP), f"{CHROM_PAIR}.ixy"),
-        cfixy=os.path.join(compare_dataset_dir(SECONDARY_GROUP), f"{CHROM_PAIR}.ixy"),
+        pfixy=os.path.join(analysis_dataset_dir(PRIMARY_GROUP), f"{CHROM_PAIR}.ixy"),
+        cfixy=os.path.join(analysis_dataset_dir(SECONDARY_GROUP), f"{CHROM_PAIR}.ixy"),
         bed=REFERENCES.get("montage_bed", ""),
         pprefix=f"{report_prefix(PRIMARY_GROUP)}_montage_all",
         cprefix=f"{report_prefix(SECONDARY_GROUP)}_montage_all",
@@ -651,13 +596,13 @@ rule montage_all:
 
 rule montage_viewpoint:
     input:
-        compare_meta_file(PRIMARY_GROUP),
-        compare_meta_file(SECONDARY_GROUP)
+        analysis_meta_file(PRIMARY_GROUP),
+        analysis_meta_file(SECONDARY_GROUP)
     output:
         touch(vis_done("montage_viewpoint"))
     params:
-        pfixy=os.path.join(compare_dataset_dir(PRIMARY_GROUP), f"{CHROM_PAIR}.ixy"),
-        cfixy=os.path.join(compare_dataset_dir(SECONDARY_GROUP), f"{CHROM_PAIR}.ixy"),
+        pfixy=os.path.join(analysis_dataset_dir(PRIMARY_GROUP), f"{CHROM_PAIR}.ixy"),
+        cfixy=os.path.join(analysis_dataset_dir(SECONDARY_GROUP), f"{CHROM_PAIR}.ixy"),
         bed=REFERENCES.get("montage_bed", ""),
         pprefix=f"{report_prefix(PRIMARY_GROUP)}_montage_viewpoint",
         cprefix=f"{report_prefix(SECONDARY_GROUP)}_montage_viewpoint",

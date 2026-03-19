@@ -27,14 +27,14 @@
 - 运行 `qc`
 - 可选地对指定组运行 `samplePETs`
   - 自动读取各组 `petMeta.json` 的 `Unique PETs`
-  - 以最小 `Unique PETs` 作为统一深度
+  - 以最小 `Unique PETs` 为基准，并向下取整到整百万作为统一深度
 - 运行 `estRes / estDis / estSim`
 - 对指定 `calling_groups` 运行：
   - `callPeaks`
   - `callLoops`
   - `callDomains`
 - 对指定 compare 组运行：
-  - `samplePETs`
+  - 直接使用 `analysis` 阶段产出的数据目录
   - 统一参数 `callLoops`
   - `callDiffLoops`
   - 可选 `montage`
@@ -190,7 +190,8 @@ params:
 - `cLoops2 pre` 产出每个组的 `petMeta.json`
 - 从中读取 `Unique PETs`
 - 对 `normalization.groups` 指定的所有组，取最小 `Unique PETs`
-- 对这些组执行 `cLoops2 samplePETs -tot <min_unique_pets>`
+- 再把这个最小值向下取整到整百万，作为最终目标值
+- 对这些组执行 `cLoops2 samplePETs -tot <rounded_min_unique_pets>`
 - 下游 `estimate / calling` 默认使用标准化后的组目录
 
 这比较适合你说的场景：不同批次或样本总深度不同，需要先统一到相同 PET 深度再继续分析。

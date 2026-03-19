@@ -32,6 +32,7 @@ normalization:
   groups: ["gm", "k562"]
   output_suffix: "_norm"
   mode: "min_unique_pets"
+  # target depth = floor(min(Unique PETs) / 1,000,000) * 1,000,000
 
 compare:
   enabled: true
@@ -39,6 +40,7 @@ compare:
   groups: ["gm", "k562"]
   output_suffix: "_cmp"
   mode: "min_unique_pets"
+  # target depth = floor(min(Unique PETs) / 1,000,000) * 1,000,000
 
 vis:
   enabled: true
