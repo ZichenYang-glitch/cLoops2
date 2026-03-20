@@ -1,0 +1,176 @@
+project_name: "mus_macrophage"
+output_root: "results_snakemake/mus_macrophage"
+cloops2_cmd: "conda run -n cLoops2 cLoops2"
+species: "mouse"
+
+chrom_whitelist:
+  human: "chr1,chr2,chr3,chr4,chr5,chr6,chr7,chr8,chr9,chr10,chr11,chr12,chr13,chr14,chr15,chr16,chr17,chr18,chr19,chr20,chr21,chr22,chrX,chrY"
+  mouse: "chr1,chr2,chr3,chr4,chr5,chr6,chr7,chr8,chr9,chr10,chr11,chr12,chr13,chr14,chr15,chr16,chr17,chr18,chr19,chrX,chrY"
+
+samples:
+  m0_bio1: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0001/bedpe/QLSL-0001_AA0001/QLSL-0001_AA0001_all.bedpe.gz"
+  m0_bio2: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0001/bedpe/QLSL-0001_AA0002/QLSL-0001_AA0002_all.bedpe.gz"
+  m0_bio3: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0001/bedpe/QLSL-0001_AA0003/QLSL-0001_AA0003_all.bedpe.gz"
+  m1_bio1: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0001/bedpe/QLSL-0001_AA0004/QLSL-0001_AA0004_all.bedpe.gz"
+  m1_bio2: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0001/bedpe/QLSL-0001_AA0005/QLSL-0001_AA0005_all.bedpe.gz"
+  m1_bio3: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0001/bedpe/QLSL-0001_AA0006/QLSL-0001_AA0006_all.bedpe.gz"
+  m2_bio1: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0001/bedpe/QLSL-0001_AA0007/QLSL-0001_AA0007_all.bedpe.gz"
+  m2_bio2: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0001/bedpe/QLSL-0001_AA0008/QLSL-0001_AA0008_all.bedpe.gz"
+  m2_bio3: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0001/bedpe/QLSL-0001_AA0009/QLSL-0001_AA0009_all.bedpe.gz"
+  m0_bio4: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0001/bedpe/QLSL-0001_AA0010/QLSL-0001_AA0010_all.bedpe.gz"
+  m0_bio5: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0001/bedpe/QLSL-0001_AA0011/QLSL-0001_AA0011_all.bedpe.gz"
+  m0_bio6: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0001/bedpe/QLSL-0001_AA0012/QLSL-0001_AA0012_all.bedpe.gz"
+  m0_bio7: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0001/bedpe/QLSL-0001_AA0013/QLSL-0001_AA0013_all.bedpe.gz"
+  m1_bio4: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0001/bedpe/QLSL-0001_AA0014/QLSL-0001_AA0014_all.bedpe.gz"
+  m1_bio5: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0001/bedpe/QLSL-0001_AA0015/QLSL-0001_AA0015_all.bedpe.gz"
+  m1_bio6: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0001/bedpe/QLSL-0001_AA0016/QLSL-0001_AA0016_all.bedpe.gz"
+  m1_bio7: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0001/bedpe/QLSL-0001_AA0017/QLSL-0001_AA0017_all.bedpe.gz"
+  m2_bio4: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0001/bedpe/QLSL-0001_AA0018/QLSL-0001_AA0018_all.bedpe.gz"
+  m2_bio5: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0001/bedpe/QLSL-0001_AA0019/QLSL-0001_AA0019_all.bedpe.gz"
+  m2_bio6: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0001/bedpe/QLSL-0001_AA0020/QLSL-0001_AA0020_all.bedpe.gz"
+  m2_bio7: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0001/bedpe/QLSL-0001_AA0021/QLSL-0001_AA0021_all.bedpe.gz"
+  m0_bio8: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0002/bedpe/QLSL-0002_AA0022/QLSL-0002_AA0022_all.bedpe.gz"
+  m0_bio9: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0002/bedpe/QLSL-0002_AA0023/QLSL-0002_AA0023_all.bedpe.gz"
+  m0_bio10: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0002/bedpe/QLSL-0002_AA0024/QLSL-0002_AA0024_all.bedpe.gz"
+  m0_bio11: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0002/bedpe/QLSL-0002_AA0025/QLSL-0002_AA0025_all.bedpe.gz"
+  m1_bio8: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0002/bedpe/QLSL-0002_AA0026/QLSL-0002_AA0026_all.bedpe.gz"
+  m1_bio9: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0002/bedpe/QLSL-0002_AA0027/QLSL-0002_AA0027_all.bedpe.gz"
+  m1_bio10: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0002/bedpe/QLSL-0002_AA0028/QLSL-0002_AA0028_all.bedpe.gz"
+  m1_bio11: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0002/bedpe/QLSL-0002_AA0029/QLSL-0002_AA0029_all.bedpe.gz"
+  m2_bio8: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0002/bedpe/QLSL-0002_AA0030/QLSL-0002_AA0030_all.bedpe.gz"
+  m2_bio9: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0002/bedpe/QLSL-0002_AA0031/QLSL-0002_AA0031_all.bedpe.gz"
+  m2_bio10: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0002/bedpe/QLSL-0002_AA0032/QLSL-0002_AA0032_all.bedpe.gz"
+  m2_bio11: "/home/yangzichen/projects/macrophage_polarization/mus/hitrac/QLSL0002/bedpe/QLSL-0002_AA0033/QLSL-0002_AA0033_all.bedpe.gz"
+
+groups:
+  m0:
+    replicates:
+      [
+        "m0_bio1",
+        "m0_bio2",
+        "m0_bio3",
+        "m0_bio4",
+        "m0_bio5",
+        "m0_bio6",
+        "m0_bio7",
+        "m0_bio8",
+        "m0_bio9",
+        "m0_bio10",
+        "m0_bio11",
+      ]
+    build_mode: "combine"
+  m1:
+    replicates:
+      [
+        "m1_bio1",
+        "m1_bio2",
+        "m1_bio3",
+        "m1_bio4",
+        "m1_bio5",
+        "m1_bio6",
+        "m1_bio7",
+        "m1_bio8",
+        "m1_bio9",
+        "m1_bio10",
+        "m1_bio11",
+      ]
+    build_mode: "combine"
+  m2:
+    replicates:
+      [
+        "m2_bio1",
+        "m2_bio2",
+        "m2_bio3",
+        "m2_bio4",
+        "m2_bio5",
+        "m2_bio6",
+        "m2_bio7",
+        "m2_bio8",
+        "m2_bio9",
+        "m2_bio10",
+        "m2_bio11",
+      ]
+    build_mode: "combine"
+
+primary_group: "m0"
+secondary_group: "m1"
+calling_groups: ["m0", "m1", "m2"]
+target_chroms: "chr21"
+view_chrom: "chr21"
+
+normalization:
+  enabled: true
+  groups: ["m0", "m1", "m2"]
+  output_suffix: "_norm"
+  mode: "min_unique_pets"
+
+compare:
+  enabled: false
+  montage_enabled: false
+  groups: ["m0", "m1", "m2"]
+  output_suffix: "_cmp"
+  mode: "min_unique_pets"
+
+vis:
+  enabled: false
+  plot_enabled: false
+
+annotation:
+  enabled: true
+
+plot_regions:
+  domain:
+    chrom: "chr21"
+    start: 35800000
+    end: 36700000
+    bs: 5000
+  loop:
+    chrom: "chr21"
+    start: 38752604
+    end: 38839334
+    bs: 500
+  filtered:
+    chrom: "chr21"
+    start: 38752604
+    end: 38839334
+    bs: 500
+  arch:
+    chrom: "chr21"
+    start: 46228500
+    end: 46290000
+
+references:
+  chrom_sizes: ""
+  gtf: "/home/yangzichen/reference/genomes/GRCm39/GRCm39.annotation.gtf"
+  bw_ctcf: ""
+  bw_atac: ""
+  bed_enhancer: "/home/yangzichen/reference/genomes/GRCm39/GRCm39.annotation.bed"
+  bed_tss: "/home/yangzichen/reference/genomes/GRCm39/GRCm39_TSS.bed"
+  montage_bed: ""
+
+params:
+  qc: "-p 16"
+  pre_extra: "-p 16"
+  combine: "-keep 1"
+  sample_pets: "-p 16"
+  est_res: "-bs 5000,1000,200 -p 16"
+  est_dis: "-bs 1000 -p 16 -plot"
+  est_sim: "-bs 1000 -plot -p 16"
+  call_peaks: "-eps 50,100 -minPts 10 -mcut 1000 -split -p 16"
+  call_loops: "-eps 200,500,1000 -minPts 10 -w -j -p 16"
+  call_domains: "-bs 5000 -ws 100000,250000 -p 16"
+  compare_sample_pets: "-p 16"
+  compare_call_loops: "-eps 200,500,1000 -minPts 10 -w -j -p 16"
+  call_diff_loops: "-j -w -p 16"
+  montage_all: "-ext 2 -simple -ppmw 0.05 -vmax 500 -p 16"
+  montage_viewpoint: "-ext 2 -simple -ppmw 0.05 -vmax 500 -vp Promoter,E19 -p 16"
+  agg_peak: "-peak_ext 2500 -peak_bins 200 -peak_norm -skipZeros -p 16"
+  agg_viewpoint: "-viewPointBs 1000 -viewPointDown 30000 -viewPointUp 20000 -1D -p 16"
+  agg_loop: "-1D -loop_norm -p 16"
+  agg_domain: "-1D -p 16"
+  filter_pets: "-p 16"
+  annotation: "-net -p 16"
+  plot_domain_extra: "-log -1D -corr -p 16"
+  plot_loop_extra: "-triu -1D -m obs -log -vmax 1 -p 16"
+  plot_filtered_extra: "-triu -log -1D -p 16"
+  plot_arch_extra: "-1D -arch -aw 0.5 -p 16"

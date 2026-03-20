@@ -1,0 +1,68 @@
+nohup: ignoring input
+Assuming unrestricted shared filesystem usage.
+host: shuai-desktop
+Building DAG of jobs...
+Using shell: /usr/bin/bash
+Provided cores: 2
+Rules claiming more threads will be scaled down.
+Job stats:
+job               count
+--------------  -------
+annotate_loops        2
+all                   1
+total                 3
+
+Select jobs to execute...
+Execute 2 jobs...
+
+[Thu Mar 19 11:32:31 2026]
+localrule annotate_loops:
+    input: results_snakemake/mus_macrophage/datasets/m1_norm/petMeta.json, results_snakemake/mus_macrophage/reports/m1_loops.txt
+    output: results_snakemake/mus_macrophage/.snakemake_state/annotation/m1.done, results_snakemake/mus_macrophage/reports/m1_loops_LoopsGtfAno.txt
+    log: results_snakemake/mus_macrophage/logs/annotation/m1.anaLoops.log
+    jobid: 57
+    reason: Missing output files: results_snakemake/mus_macrophage/reports/m1_loops_LoopsGtfAno.txt, results_snakemake/mus_macrophage/.snakemake_state/annotation/m1.done
+    wildcards: group=m1
+    resources: tmpdir=/tmp
+Shell command: 
+        mkdir -p "$(dirname "results_snakemake/mus_macrophage/.snakemake_state/annotation/m1.done")" "$(dirname "results_snakemake/mus_macrophage/logs/annotation/m1.anaLoops.log")"
+        conda run -n cLoops2 cLoops2 anaLoops -loops "results_snakemake/mus_macrophage/reports/m1_loops.txt" -o "results_snakemake/mus_macrophage/reports/m1_loops" -gtf "/home/yangzichen/reference/genomes/GRCm39/GRCm39.annotation.gtf" -net -p 16 > "results_snakemake/mus_macrophage/logs/annotation/m1.anaLoops.log" 2>&1
+        touch "results_snakemake/mus_macrophage/.snakemake_state/annotation/m1.done"
+        
+
+[Thu Mar 19 11:32:31 2026]
+localrule annotate_loops:
+    input: results_snakemake/mus_macrophage/datasets/m2_norm/petMeta.json, results_snakemake/mus_macrophage/reports/m2_loops.txt
+    output: results_snakemake/mus_macrophage/.snakemake_state/annotation/m2.done, results_snakemake/mus_macrophage/reports/m2_loops_LoopsGtfAno.txt
+    log: results_snakemake/mus_macrophage/logs/annotation/m2.anaLoops.log
+    jobid: 58
+    reason: Missing output files: results_snakemake/mus_macrophage/reports/m2_loops_LoopsGtfAno.txt, results_snakemake/mus_macrophage/.snakemake_state/annotation/m2.done
+    wildcards: group=m2
+    resources: tmpdir=/tmp
+Shell command: 
+        mkdir -p "$(dirname "results_snakemake/mus_macrophage/.snakemake_state/annotation/m2.done")" "$(dirname "results_snakemake/mus_macrophage/logs/annotation/m2.anaLoops.log")"
+        conda run -n cLoops2 cLoops2 anaLoops -loops "results_snakemake/mus_macrophage/reports/m2_loops.txt" -o "results_snakemake/mus_macrophage/reports/m2_loops" -gtf "/home/yangzichen/reference/genomes/GRCm39/GRCm39.annotation.gtf" -net -p 16 > "results_snakemake/mus_macrophage/logs/annotation/m2.anaLoops.log" 2>&1
+        touch "results_snakemake/mus_macrophage/.snakemake_state/annotation/m2.done"
+        
+Touching output file results_snakemake/mus_macrophage/.snakemake_state/annotation/m1.done.
+[Thu Mar 19 11:33:01 2026]
+Finished jobid: 57 (Rule: annotate_loops)
+1 of 3 steps (33%) done
+Touching output file results_snakemake/mus_macrophage/.snakemake_state/annotation/m2.done.
+[Thu Mar 19 11:33:01 2026]
+Finished jobid: 58 (Rule: annotate_loops)
+2 of 3 steps (67%) done
+Select jobs to execute...
+Execute 1 jobs...
+
+[Thu Mar 19 11:33:01 2026]
+localrule all:
+    input: results_snakemake/mus_macrophage/reports/qc_bedpeQc.txt, results_snakemake/mus_macrophage/.snakemake_state/pre/m0_bio1.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m0_bio10.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m0_bio11.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m0_bio2.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m0_bio3.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m0_bio4.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m0_bio5.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m0_bio6.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m0_bio7.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m0_bio8.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m0_bio9.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m1_bio1.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m1_bio10.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m1_bio11.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m1_bio2.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m1_bio3.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m1_bio4.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m1_bio5.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m1_bio6.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m1_bio7.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m1_bio8.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m1_bio9.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m2_bio1.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m2_bio10.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m2_bio11.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m2_bio2.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m2_bio3.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m2_bio4.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m2_bio5.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m2_bio6.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m2_bio7.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m2_bio8.done, results_snakemake/mus_macrophage/.snakemake_state/pre/m2_bio9.done, results_snakemake/mus_macrophage/.snakemake_state/groups/m0.done, results_snakemake/mus_macrophage/.snakemake_state/groups/m1.done, results_snakemake/mus_macrophage/.snakemake_state/groups/m2.done, results_snakemake/mus_macrophage/.snakemake_state/normalize/m0.done, results_snakemake/mus_macrophage/.snakemake_state/normalize/m1.done, results_snakemake/mus_macrophage/.snakemake_state/normalize/m2.done, results_snakemake/mus_macrophage/.snakemake_state/estimate/m0.estRes.done, results_snakemake/mus_macrophage/.snakemake_state/estimate/m1.estRes.done, results_snakemake/mus_macrophage/.snakemake_state/estimate/m2.estRes.done, results_snakemake/mus_macrophage/.snakemake_state/estimate/m0.estDis.done, results_snakemake/mus_macrophage/.snakemake_state/estimate/all.estSim.done, results_snakemake/mus_macrophage/reports/m0_peaks.bed, results_snakemake/mus_macrophage/reports/m1_peaks.bed, results_snakemake/mus_macrophage/reports/m2_peaks.bed, results_snakemake/mus_macrophage/reports/m0_loops.txt, results_snakemake/mus_macrophage/reports/m1_loops.txt, results_snakemake/mus_macrophage/reports/m2_loops.txt, results_snakemake/mus_macrophage/reports/m0_domains.bed, results_snakemake/mus_macrophage/reports/m1_domains.bed, results_snakemake/mus_macrophage/reports/m2_domains.bed, results_snakemake/mus_macrophage/.snakemake_state/annotation/m0.done, results_snakemake/mus_macrophage/.snakemake_state/annotation/m1.done, results_snakemake/mus_macrophage/.snakemake_state/annotation/m2.done, results_snakemake/mus_macrophage/reports/m0_loops_LoopsGtfAno.txt, results_snakemake/mus_macrophage/reports/m1_loops_LoopsGtfAno.txt, results_snakemake/mus_macrophage/reports/m2_loops_LoopsGtfAno.txt
+    jobid: 0
+    reason: Input files updated by another job: results_snakemake/mus_macrophage/reports/m1_loops_LoopsGtfAno.txt, results_snakemake/mus_macrophage/.snakemake_state/annotation/m2.done, results_snakemake/mus_macrophage/reports/m2_loops_LoopsGtfAno.txt, results_snakemake/mus_macrophage/.snakemake_state/annotation/m1.done
+    resources: tmpdir=/tmp
+Shell command: None
+[Thu Mar 19 11:33:01 2026]
+Finished jobid: 0 (Rule: all)
+3 of 3 steps (100%) done
+Complete log(s): /home/yangzichen/projects/cLoops2/cLoops2-0.0.5/cLoops2-0.0.5/snakemake_core/.snakemake/log/2026-03-19T113231.441024.snakemake.log

@@ -2,8 +2,6 @@ import os
 import json
 from pathlib import Path
 
-configfile: "config.yaml"
-
 PROJECT = config["project_name"]
 OUTPUT_ROOT = config["output_root"]
 SAMPLES = config["samples"]
@@ -146,12 +144,12 @@ def vis_done(name):
     return state_file("vis", f"{name}.done")
 
 
-def annotation_done():
-    return state_file("annotation", f"{PRIMARY_GROUP}.done")
+def annotation_done(group):
+    return state_file("annotation", f"{group}.done")
 
 
-def annotation_prefix():
-    return report_prefix(f"{PRIMARY_GROUP}_loops")
+def annotation_prefix(group):
+    return report_prefix(f"{group}_loops")
 
 
 def plot_region(name):
@@ -226,8 +224,9 @@ PLOT_MANUAL_OUTPUTS = [
     vis_done("plot_arch"),
 ]
 ANNOTATION_OUTPUTS = [
-    annotation_done(),
-    f"{annotation_prefix()}_LoopsGtfAno.txt",
+    annotation_done(group) for group in CALLING_GROUPS
+] + [
+    f"{annotation_prefix(group)}_LoopsGtfAno.txt" for group in CALLING_GROUPS
 ] if ANNOTATION_ENABLED else []
 
 
@@ -828,20 +827,22 @@ rule plot_arch:
 
 
 rule annotate_loops:
+    wildcard_constraints:
+        group=CALLING_GROUP_PATTERN
     input:
-        analysis_meta_file(PRIMARY_GROUP),
-        f"{report_prefix(PRIMARY_GROUP)}_loops.txt"
+        lambda wc: analysis_meta_file(wc.group),
+        lambda wc: f"{report_prefix(wc.group)}_loops.txt"
     output:
-        touch(annotation_done()),
-        f"{annotation_prefix()}_LoopsGtfAno.txt"
+        touch(annotation_done("{group}")),
+        f"{report_prefix('{group}_loops')}_LoopsGtfAno.txt"
     params:
-        loops=f"{report_prefix(PRIMARY_GROUP)}_loops.txt",
-        prefix=annotation_prefix(),
+        loops=lambda wc: f"{report_prefix(wc.group)}_loops.txt",
+        prefix=lambda wc: annotation_prefix(wc.group),
         gtf=REFERENCES.get("gtf", ""),
         args=PARAMS.get("annotation", "-net"),
         cmd=CLOOPS2_CMD
     log:
-        os.path.join(LOG_DIR, "annotation", f"{PRIMARY_GROUP}.anaLoops.log")
+        os.path.join(LOG_DIR, "annotation", "{group}.anaLoops.log")
     shell:
         r"""
         mkdir -p "$(dirname "{output[0]}")" "$(dirname "{log}")"
