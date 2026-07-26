@@ -47,6 +47,10 @@ from cLoops2.geo import checkLoopOverlap
 from cLoops2.est import estSfMANorm
 from cLoops2.settings import *
 from cLoops2.callCisLoops import getLoopNearbyPETs
+from cLoops2.metadata import (CAP_FORMAL_INFERENCE,
+                              CAP_GLOBAL_NORMALIZATION,
+                              build_library_context,
+                              inspect_actual_counts)
 
 
 def mergeLoops(aloops, samplea, bloops, sampleb):
@@ -709,14 +713,25 @@ def callDiffLoops(
     #process meta information
     na = td.split("/")[-1]  #name of sample directory
     tmetaf = td + "/petMeta.json"
-    tmeta = json.loads(open(tmetaf).read())
+    with open(tmetaf) as handle:
+        tmeta = json.load(handle)
     nb = cd.split("/")[-1]
     cmetaf = cd + "/petMeta.json"
-    cmeta = json.loads(open(cmetaf).read())
+    with open(cmetaf) as handle:
+        cmeta = json.load(handle)
+
+    tcontext = build_library_context(
+        tmeta, actual_counts=inspect_actual_counts(tmeta))
+    ccontext = build_library_context(
+        cmeta, actual_counts=inspect_actual_counts(cmeta))
+    tcontext.require(CAP_FORMAL_INFERENCE)
+    ccontext.require(CAP_FORMAL_INFERENCE)
+    tcontext.require(CAP_GLOBAL_NORMALIZATION)
+    ccontext.require(CAP_GLOBAL_NORMALIZATION)
 
     #total PETs
-    ta = tmeta["Unique PETs"]
-    tb = cmeta["Unique PETs"]
+    ta = tcontext.logical_total
+    tb = ccontext.logical_total
 
     #chromosomes for testing
     keys = set(tmeta["data"]["cis"].keys()).intersection(
@@ -815,4 +830,3 @@ def callDiffLoops(
                          pcut=pcut)
     #plot aggregated differential loops
     plotDiffAggLoops(dloops, output, tl, cl, td, cd, cpu=cpu, norm=True,vmin=vmin,vmax=vmax,cmap=cmap)
-

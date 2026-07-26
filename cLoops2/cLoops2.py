@@ -15,6 +15,7 @@ import warnings
 warnings.filterwarnings("ignore")
 import os
 import sys
+import json
 import argparse
 from glob import glob
 from datetime import datetime
@@ -31,8 +32,8 @@ from cLoops2.io import parseBedpe, parsePairs, txt2ixy, updateJson, writeNewJson
 from cLoops2.est import estRes, estSat  #estimate reasonable resolution, sequencing depth
 from cLoops2.agg import aggPeaks, aggLoops, aggViewPoints, aggDomains, aggTwoAnchors  #aggreate analysis of peaks,loops, viewPoints, domains
 from cLoops2.est import getXyDis, getGmmLabelsEps, getKDis, getKDisKneeEps  #estimate eps
-from cLoops2.dump import ixy2bed,ixy2bedpe,ixy2hic,ixy2washU,ixy2ucsc,ixy2bdg,ixy2mat,ixy2virtual4C #dump files to others
-from cLoops2.plot import plotGmmEst, plotKDis, plotKDisE, plotMatHeatmap,plotPETsScatter,plotPETsArches,plotProfiles  #plot
+from cLoops2.dump import ixy2bed,ixy2bedpe,ixy2hic,ixy2washU,ixy2ucsc,ixy2bdg,ixy2mat,ixy2transmat,ixy2virtual4C #dump files to others
+from cLoops2.plot import plotGmmEst, plotKDis, plotKDisE, plotMatHeatmap,plotTransMatrix,plotPETsScatter,plotPETsArches,plotProfiles  #plot
 from cLoops2.utils import getLogger  #logger and other utilities
 from cLoops2.quant import quantPeaks, quantLoops, quantDomains #quantification of features
 from cLoops2.estSim import estSim #estimate similarities 
@@ -46,6 +47,13 @@ from cLoops2.ano import anaLoops #analysis of loops
 from cLoops2.callCisLoops import callCisLoops  #call intra-chromosomal loops
 from cLoops2.callDiffLoops import callDiffLoops  #call differential enriched loops between conditions
 from cLoops2.callTransLoops import callTransLoops  #call inter-chromosomal loops
+from cLoops2.trans_diff import call_trans_diff  #replicate-aware trans differential analysis
+from cLoops2.trans_agg import (aggregate_trans_loops, plot_trans_aggregate,
+                               plot_trans_montage, plot_trans_viewpoint,
+                               read_axis_regions, read_trans_features,
+                               trans_montage, trans_viewpoint,
+                               write_trans_aggregate, write_trans_montage,
+                               write_trans_viewpoint)
 
 #glob settings
 #logger
@@ -85,6 +93,17 @@ def parseMinpts(minPts,emPair=False):
     return minPts
 
 
+def nonNegativeInt(value):
+    """argparse type for non-negative integer command-line values."""
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("must be an integer")
+    if value < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
+    return value
+
+
 def mainHelp():
     """
     Create the command line interface of the main programme of cLoops2.
@@ -120,6 +139,9 @@ Available sub-commands are:
              Rehoboam plot. 
     agg: aggregated feature analysis and plots, features can be peaks, view 
          points, loops and domains.
+    transAgg: directional rectangular aggregate of inter-chromosomal loops.
+    transViewpoint: directional inter-chromosomal viewpoint profile.
+    transMontage: non-mirrored inter-chromosomal region montage.
     quant: quantify peaks, loops and domains.
     anaLoops: anotate loops for target genes.
     findTargets: find target genes of genomic regions through networks from 
@@ -137,7 +159,7 @@ Examples:
     cLoops2 estDis -d trac -o trac -plot -bs 1000 
     cLoops2 estSim -ds Trac1,Trac2 -o trac_sim -p 10 -bs 2000 -m pcc -plot
     cLoops2 filterPETs -d trac -peaks trac_peaks.bed -o trac_peaksFiltered -p 10
-    cLoops2 samplePETs -d trac -o trac_sampled -t 5000000 -p 10
+    cLoops2 samplePETs -d trac -o trac_sampled -tot 5000000 -p 10
     cLoops2 callPeaks -d H3K4me3_ChIC -bgd IgG_ChIC -o H3K4me3_cLoops2 -eps 150 \\
                       -minPts 10
     cLoops2 callLoops -d Trac -eps 200,500,1000 -minPts 3 -filter -o Trac -w -j \\
@@ -474,6 +496,15 @@ Examples:
         add_help=False,
     )
     dump.add_argument(
+        "-mode",
+        dest="dumpMode",
+        choices=("cis", "trans", "all"),
+        default="cis",
+        help=("PET category for BED/BEDPE/WashU/UCSC export. Trans cut/mcut "
+              "are ignored because inter-chromosomal genomic distance is "
+              "undefined. Default: cis."),
+    )
+    dump.add_argument(
         "-bed",
         dest="bed",
         required=False,
@@ -619,6 +650,16 @@ Examples:
         "Convert data to matrix txt file with required resolution."
     )
     dump.add_argument(
+        "-trans_mat",
+        dest="transMat",
+        required=False,
+        action="store_true",
+        default=False,
+        help=("Export a non-mirrored chromX-by-chromY rectangular matrix. "
+              "Uses -mat_chrom/-mat_start/-mat_end for the X axis and the "
+              "trans-specific Y-axis options below."),
+    )
+    dump.add_argument(
         "-mat_res",
         dest="mat_res",
         required=False,
@@ -656,6 +697,52 @@ Examples:
         help=
         "End genomic coordinate for the target region. Default will be the\n"\
         "largest coordinate from specified chrom-chrom set."
+    )
+    dump.add_argument(
+        "-mat_y_start",
+        dest="matYStart",
+        required=False,
+        type=int,
+        default=-1,
+        help="Y/chromY start for -trans_mat. Default: infer from PETs.",
+    )
+    dump.add_argument(
+        "-mat_y_end",
+        dest="matYEnd",
+        required=False,
+        type=int,
+        default=-1,
+        help="Y/chromY end for -trans_mat. Default: infer from PETs.",
+    )
+    dump.add_argument(
+        "-mat_y_res",
+        dest="matYRes",
+        required=False,
+        type=int,
+        default=None,
+        help="Y-axis bin size for -trans_mat. Default: -mat_res.",
+    )
+    dump.add_argument(
+        "-trans_mat_method",
+        dest="transMatMethod",
+        choices=("obs", "pair_oe", "window_oe"),
+        default="obs",
+        help=("Rectangular matrix value: observed, pair-global O/E, or "
+              "window-conditional O/E. Default: obs."),
+    )
+    dump.add_argument(
+        "-trans_mat_sparse",
+        dest="transMatSparse",
+        action="store_true",
+        default=False,
+        help="Write observed trans counts as streaming-friendly COO text.",
+    )
+    dump.add_argument(
+        "-mat_max_dense_cells",
+        dest="matMaxDenseCells",
+        type=nonNegativeInt,
+        default=10000000,
+        help="Maximum cells allowed for dense -trans_mat output.",
     )
     dump.add_argument(
         "-log",
@@ -1108,6 +1195,15 @@ Examples:
         "filter PETs."
     )
     filterPETs.add_argument(
+        "-mode",
+        dest="filterMode",
+        choices=("cis", "trans", "all"),
+        default="cis",
+        help=("PET category used by -loops or -peaks. Trans filtering keeps "
+              "the two coordinate axes directional. Singleton/KNN remain "
+              "cis-only. Default: cis."),
+    )
+    filterPETs.add_argument(
         "-gap",
         dest="gap",
         required=False,
@@ -1191,15 +1287,29 @@ Examples:
  
     #sample PETs to similar depth for fair comparasion
     samplePETsDes = """
-Sampling PETs to target total size. 
+Sampling the retained whole library to a target logical size.
 
 If there are multiple sample libraries and the total sequencing depths vary a 
 lot, and you want to compare the data fairly, it's better to sample them to 
 similar total PETs (either down-sampling or up-sampling), then call peaks/loops
-with the same parameters. 
+with the same parameters.
+
+The sampling universe is all PET categories retained by the input directory.
+-mode controls which category projection is physically written.  Therefore
+cis/trans projection outputs usually contain fewer physical rows than -tot;
+their overall represented depth is recorded in petMeta.json Sampling metadata.
+The same seed gives the same global allocation independently of -mode and CPU.
+
+When -tot is below, equal to, or above the logical source depth, samplePETs
+automatically performs sampling without replacement, identity, or sampling
+with replacement, respectively.  Replacement output is suitable for
+descriptive analysis but does not create independent evidence for p-values.
+Root and fully materialized all inputs support all three directions.  A
+cis/trans projection currently supports same-mode nested downsampling only;
+return to the original pre/all parent for projection upsampling.
 
 Example:
-    cLoops2 samplePETs -d trac -o trac_sampled -tot 5000000 -p 10
+    cLoops2 samplePETs -d trac -o trac_sampled -tot 5000000 -mode all -seed 123 -p 10
     """
     samplePETs = subparsers.add_parser(
         'samplePETs',
@@ -1214,8 +1324,24 @@ Example:
         dest="tot",
         default=0,
         required=True,
-        type=int,
-        help="Target total number of PETs.",
+        type=nonNegativeInt,
+        help="Target logical number of PETs for the retained whole library.",
+    )
+    samplePETs.add_argument(
+        "-mode",
+        dest="sampleMode",
+        choices=("cis", "trans", "all"),
+        default="cis",
+        help=("PET category projection to write. Sampling itself always uses "
+              "the complete retained input library. Default: cis."),
+    )
+    samplePETs.add_argument(
+        "-seed",
+        dest="sampleSeed",
+        default=None,
+        type=nonNegativeInt,
+        help=("Random seed for reproducible allocation and row sampling. "
+              "Default: system entropy, with the effective seed recorded."),
     )
 
     #calling intra-chromosomal loops
@@ -1406,6 +1532,14 @@ Please note that the blockDBSCAN implementation in cLoops2 is much more
 sensitive than cDBSCAN in cLoops, so the same parameters can generate quite 
 different results. With -hic option, cDBSCAN will be used. 
 
+Trans analysis is directional and has two tracks. De novo blockDBSCAN
+discovery (-mode trans without -trans_candidates) writes exploratory
+*_trans_candidates.txt; adjusted p-values and significance are NA because the
+same PETs selected and scored the rectangles. Independent fixed candidates
+are tested with strict X/Y conditional statistics and analysis-wide BH/BY,
+then written to *_trans_loops.txt. The fixed trans-only path does not use or
+require eps/minPts. Upstream trans PETs require cLoops2 pre -trans.
+
 Examples:
     1. call loops for Hi-TrAC/Trac-looping
         cLoops2 callLoops -d trac -o trac -eps 200,500,1000,2000 -minPts 5 -w -j
@@ -1423,10 +1557,21 @@ Examples:
     4. call loops for high-resolution Hi-C like data 
         cLoops2 callLoops -d hic -o hic -eps 2000,5000,10000 -minPts 20,50 -w -j
     
-    5. call inter-chromosomal loops (for most data, there will be no significant 
-       inter-chromosomal loops)
-        cLoops2 callLoops -d HiC -eps 5000 -minPts 10,20,50,100,200 -w -j -trans\\                          
-                          -o HiC_trans
+    5. discover exploratory inter-chromosomal candidates
+        cLoops2 callLoops -d HiC -o HiC_trans -mode trans \\
+                          -eps 5000 -minPts 10,20,50,100,200 -w -j
+
+    6. formally test an independent fixed trans candidate family
+        cLoops2 callLoops -d HiC -o HiC_fixed -mode trans \\
+                          -trans_candidates fixed.tsv \\
+                          -trans_candidate_source "independent cohort" \\
+                          -trans_local_pad 25000 -trans_mtc BH
+
+    7. discover on one PET partition and test on an independent partition
+        cLoops2 callLoops -d HiC -o HiC_split -mode trans \\
+                          -eps 5000 -minPts 20 \\
+                          -trans_split -trans_split_seed 123 \\
+                          -trans_validation_fraction 0.5
     """
     callLoops = subparsers.add_parser(
         'callLoops',
@@ -1531,9 +1676,87 @@ Examples:
         default=False,
         action="store_true",
         help=
-        "Whether to call trans- (inter-chromosomal) loops. Default is not, set\n"\
-        "this flag to call. For most common cases, not recommended, only for\n"\
-        "data there are obvious visible trans loops."
+        "Deprecated compatibility alias for -mode all. Upstream trans PETs\n"\
+        "must have been retained with cLoops2 pre -trans."
+    )
+    callLoops.add_argument(
+        "-mode",
+        dest="loopMode",
+        choices=("cis", "trans", "all"),
+        default="cis",
+        help=("Loop category to analyze. Default: cis. The legacy -trans "
+              "flag is retained as an alias for -mode all."),
+    )
+    callLoops.add_argument(
+        "-trans_candidates",
+        dest="transCandidates",
+        default="",
+        type=str,
+        help=("Independent fixed trans rectangles to test formally. The "
+              "first seven columns are loopId/chromX/startX/endX/chromY/"
+              "startY/endY. Without this option, de novo trans DBSCAN output "
+              "is explicitly exploratory and has no adjusted p/significant."),
+    )
+    callLoops.add_argument(
+        "-trans_candidate_source",
+        dest="transCandidateSource",
+        default="",
+        type=str,
+        help=("Required provenance declaration for -trans_candidates, "
+              "explaining why candidates are independent of the current "
+              "X-Y PET pairings."),
+    )
+    callLoops.add_argument(
+        "-trans_local_pad",
+        dest="transLocalPad",
+        default=None,
+        type=nonNegativeInt,
+        help=("Padding on each trans axis for the local conditional table. "
+              "Default: 5000 for fixed candidates; five times the largest "
+              "eps for exploratory discovery."),
+    )
+    callLoops.add_argument(
+        "-trans_test_scope",
+        dest="transTestScope",
+        choices=("both", "global"),
+        default="both",
+        help=("Primary fixed-candidate null: both requires global and local "
+              "enrichment; global uses only the pair-wide test."),
+    )
+    callLoops.add_argument(
+        "-trans_mtc",
+        dest="transMtc",
+        choices=("BH", "BY"),
+        default="BH",
+        help="Multiple-testing correction for fixed candidates. Default: BH.",
+    )
+    callLoops.add_argument(
+        "-trans_alpha",
+        dest="transAlpha",
+        type=float,
+        default=0.05,
+        help="Adjusted-p threshold for fixed candidates. Default: 0.05.",
+    )
+    callLoops.add_argument(
+        "-trans_split",
+        dest="transSplit",
+        action="store_true",
+        help=("Use disjoint discovery/validation PET partitions for de novo "
+              "formal trans inference. Requires -trans_split_seed."),
+    )
+    callLoops.add_argument(
+        "-trans_split_seed",
+        dest="transSplitSeed",
+        type=nonNegativeInt,
+        default=None,
+        help="Non-negative seed for deterministic trans PET partitioning.",
+    )
+    callLoops.add_argument(
+        "-trans_validation_fraction",
+        dest="transValidationFraction",
+        type=float,
+        default=0.5,
+        help="Held-out PET fraction used only for scoring/testing. Default: 0.5.",
     )
     callLoops.add_argument(
         "-emPair",
@@ -1548,7 +1771,14 @@ Examples:
     )
  
     callDiffLoopsDes = """
-Call differentially enriched intra-chromosomal loops between two conditions.
+Call differentially enriched loops between two conditions.
+
+The default ``-mode cis`` preserves the historical pooled two-directory
+workflow.  ``-mode trans`` counts one fixed trans candidate family in every
+biological sample listed in ``-samples``.  It never treats pooled or sampled
+directories as biological replicates.  One sample per condition uses an
+explicitly exploratory exact technical-sampling test; two or more samples per
+condition use a negative-binomial GLM and also export an edgeR QL script.
 
 Similar to calling peaks with control data, calling differentially enriched 
 loops is based on scaled PETs and the Poisson test. There are three main steps 
@@ -1585,28 +1815,38 @@ Example:
         formatter_class=RawTextHelpFormatter,
     )
     callDiffLoops.add_argument(
+        "-mode",
+        dest="diffMode",
+        choices=["cis", "trans"],
+        default="cis",
+        help="Differential workflow. Default: cis (legacy behavior).")
+    callDiffLoops.add_argument(
         "-tloop",
         dest="tloop",
         type=str,
-        required=True,
+        default="",
+        required=False,
         help="The target loops in _loop.txt file called by cLoops2.")
     callDiffLoops.add_argument(
         "-cloop",
         dest="cloop",
         type=str,
-        required=True,
+        default="",
+        required=False,
         help="The control loops in _loop.txt file called by cLoops2.")
     callDiffLoops.add_argument(
         "-td",
         dest="tpred",
         type=str,
-        required=True,
+        default="",
+        required=False,
         help="The data directory generated by cLoops2 for target data.")
     callDiffLoops.add_argument(
         "-cd",
         dest="cpred",
         type=str,
-        required=True,
+        default="",
+        required=False,
         help="The data directory generated by cLoops2 for control data.")
     callDiffLoops.add_argument(
         "-pcut",
@@ -1718,6 +1958,61 @@ Example:
         help=
         "The heatmap style. Default is summer."
     )
+    callDiffLoops.add_argument(
+        "-samples",
+        dest="diffSampleSheet",
+        default="",
+        help="Trans mode TSV with sample, condition and directory columns.")
+    callDiffLoops.add_argument(
+        "-trans_candidates",
+        dest="diffTransCandidates",
+        default="",
+        help="Fixed trans candidate rectangles; the first seven columns are used.")
+    callDiffLoops.add_argument(
+        "-trans_candidate_source",
+        dest="diffTransCandidateSource",
+        default="",
+        help="Required provenance declaration for the fixed candidate family.")
+    callDiffLoops.add_argument(
+        "-reference",
+        dest="diffReference",
+        default="",
+        help="Reference condition name; defaults to first condition in the sheet.")
+    callDiffLoops.add_argument(
+        "-contrast",
+        dest="diffContrast",
+        default="",
+        help="Contrast condition name; defaults to second condition in the sheet.")
+    callDiffLoops.add_argument(
+        "-trans_method",
+        dest="diffTransMethod",
+        choices=["auto", "exact", "nb", "export"],
+        default="auto",
+        help="Trans test: auto, exploratory exact, NB GLM, or matrices only.")
+    callDiffLoops.add_argument(
+        "-trans_offset",
+        dest="diffTransOffset",
+        choices=["global", "pair", "marginal"],
+        default="global",
+        help="Trans rate estimand/exposure. Default: global logical depth.")
+    callDiffLoops.add_argument(
+        "-trans_mtc",
+        dest="diffTransMtc",
+        choices=["BH", "BY"],
+        default="BH",
+        help="Multiple-testing adjustment across the complete candidate family.")
+    callDiffLoops.add_argument(
+        "-trans_alpha",
+        dest="diffTransAlpha",
+        type=float,
+        default=0.05,
+        help="Adjusted-p threshold for replicated trans NB results.")
+    callDiffLoops.add_argument(
+        "-trans_prior_df",
+        dest="diffTransPriorDf",
+        type=float,
+        default=10.0,
+        help="Prior strength for simple NB dispersion shrinkage. Default: 10.")
  
     #call domain function
     callDomainsDes = """
@@ -1879,6 +2174,50 @@ Examples:
         help=
         "End genomic coordinate for the target region. Default is to infer\n"\
         "from the data."
+    )
+    plot.add_argument(
+        "-trans",
+        dest="plotTrans",
+        action="store_true",
+        default=False,
+        help=("Plot -f as a directional non-mirrored trans matrix. Cis-only "
+              "options such as -triu, -corr, -eig, -arch and -virtual4C are "
+              "not available in this mode."),
+    )
+    plot.add_argument(
+        "-y_start",
+        dest="plotYStart",
+        type=int,
+        default=0,
+        help="chromY start for -trans. Default: infer from Y endpoints.",
+    )
+    plot.add_argument(
+        "-y_end",
+        dest="plotYEnd",
+        type=int,
+        default=-1,
+        help="chromY end for -trans. Default: infer from Y endpoints.",
+    )
+    plot.add_argument(
+        "-y_bs",
+        dest="plotYBinSize",
+        type=int,
+        default=None,
+        help="chromY bin size for -trans. Default: -bs.",
+    )
+    plot.add_argument(
+        "-trans_method",
+        dest="plotTransMethod",
+        choices=("obs", "pair_oe", "window_oe"),
+        default="obs",
+        help="Observed, pair-global O/E, or window-conditional O/E.",
+    )
+    plot.add_argument(
+        "-max_dense_cells",
+        dest="plotMaxDenseCells",
+        type=nonNegativeInt,
+        default=10000000,
+        help="Maximum dense cells allowed for a trans heatmap.",
     )
     plot.add_argument(
         "-loops",
@@ -2641,6 +2980,93 @@ Examples:
         help="Whether to remove all 0 records. Default is not."
     )
 
+    transAgg = subparsers.add_parser(
+        "transAgg", parents=[parser], add_help=False,
+        usage=argparse.SUPPRESS, formatter_class=RawTextHelpFormatter,
+        description=("Aggregate directional, non-mirrored trans rectangles. "
+                     "Pair O/E uses Npair; library RPM uses validated Lglobal."))
+    transAgg.add_argument("-loops", dest="transAggLoops", required=True)
+    transAgg.add_argument("-x_bs", dest="transAggXBs", type=int,
+                          required=True)
+    transAgg.add_argument("-y_bs", dest="transAggYBs", type=int, default=None)
+    transAgg.add_argument("-x_flank_bins", dest="transAggXFlank", type=int,
+                          default=10)
+    transAgg.add_argument("-y_flank_bins", dest="transAggYFlank", type=int,
+                          default=10)
+    transAgg.add_argument("-method", dest="transAggMethod",
+                          choices=("obs", "pair_oe", "window_oe"),
+                          default="obs")
+    transAgg.add_argument("-norm", dest="transAggNorm",
+                          choices=("raw", "library_rpm"), default="raw")
+    transAgg.add_argument("-skipZeros", dest="transAggSkipZeros",
+                          action="store_true")
+    transAgg.add_argument("-edge_policy", dest="transAggEdgePolicy",
+                          choices=("skip", "error"), default="skip")
+    transAgg.add_argument("-max_dense_cells", dest="transAggMaxCells",
+                          type=int, default=10000000)
+    transAgg.add_argument("-plot", dest="transAggPlot", action="store_true")
+
+    transViewpoint = subparsers.add_parser(
+        "transViewpoint", parents=[parser], add_help=False,
+        usage=argparse.SUPPRESS, formatter_class=RawTextHelpFormatter,
+        description=("Directional trans virtual-viewpoint profile. The "
+                     "anchor and target stay on their declared axes."))
+    transViewpoint.add_argument("-chromX", dest="transVpChromX", required=True)
+    transViewpoint.add_argument("-chromY", dest="transVpChromY", required=True)
+    transViewpoint.add_argument("-anchor_axis", dest="transVpAxis",
+                                choices=("x", "y"), required=True)
+    transViewpoint.add_argument("-anchor_start", dest="transVpAnchorStart",
+                                type=int, required=True)
+    transViewpoint.add_argument("-anchor_end", dest="transVpAnchorEnd",
+                                type=int, required=True)
+    transViewpoint.add_argument("-target_start", dest="transVpTargetStart",
+                                type=int, required=True)
+    transViewpoint.add_argument("-target_end", dest="transVpTargetEnd",
+                                type=int, required=True)
+    transViewpoint.add_argument("-bs", dest="transVpBs", type=int,
+                                required=True)
+    transViewpoint.add_argument("-method", dest="transVpMethod",
+                                choices=("obs", "pair_oe", "window_oe"),
+                                default="obs")
+    transViewpoint.add_argument("-norm", dest="transVpNorm",
+                                choices=("raw", "library_rpm"), default="raw")
+    transViewpoint.add_argument("-context_start", dest="transVpContextStart",
+                                type=int, default=None)
+    transViewpoint.add_argument("-context_end", dest="transVpContextEnd",
+                                type=int, default=None)
+    transViewpoint.add_argument("-record_id", dest="transVpRecordId",
+                                default=None)
+    transViewpoint.add_argument("-max_bins", dest="transVpMaxBins",
+                                type=int, default=1000000)
+    transViewpoint.add_argument("-plot", dest="transVpPlot",
+                                action="store_true")
+
+    transMontage = subparsers.add_parser(
+        "transMontage", parents=[parser], add_help=False,
+        usage=argparse.SUPPRESS, formatter_class=RawTextHelpFormatter,
+        description=("Build a directional chromX-region by chromY-region "
+                     "montage without symmetric mirroring."))
+    transMontage.add_argument("-chromX", dest="transMonChromX", required=True)
+    transMontage.add_argument("-chromY", dest="transMonChromY", required=True)
+    transMontage.add_argument("-x_regions", dest="transMonXRegions",
+                              required=True)
+    transMontage.add_argument("-y_regions", dest="transMonYRegions",
+                              required=True)
+    transMontage.add_argument("-method", dest="transMonMethod",
+                              choices=("obs", "pair_oe", "window_oe"),
+                              default="obs")
+    transMontage.add_argument("-norm", dest="transMonNorm",
+                              choices=("raw", "library_rpm"), default="raw")
+    transMontage.add_argument("-record_id", dest="transMonRecordId",
+                              default=None)
+    transMontage.add_argument("-max_cells", dest="transMonMaxCells",
+                              type=int, default=1000000)
+    transMontage.add_argument(
+        "-closed_regions", dest="transMonClosed", action="store_true",
+        help="Treat region end coordinates as inclusive instead of BED half-open.")
+    transMontage.add_argument("-plot", dest="transMonPlot",
+                              action="store_true")
+
     quantDes = """
 Quantify the peaks, loops and domains.  The output file will be the same as
 outputs of callPeaks, callLoops and callDomains.
@@ -2691,6 +3117,28 @@ Examples:
         action="store_true",
         help="If set, turn off p-values, FDR, enrichment score caculation for\n"\
         "loops."
+    )
+    quant.add_argument(
+        "-mode",
+        dest="quantMode",
+        choices=("cis", "trans", "all"),
+        default="cis",
+        help=("Loop category to quantify. This affects -loops only; peaks "
+              "and domains remain cis-only. Default: cis."),
+    )
+    quant.add_argument(
+        "-trans_local_pad",
+        dest="quantTransLocalPad",
+        type=nonNegativeInt,
+        default=5000,
+        help="Padding for descriptive trans local tables. Default: 5000.",
+    )
+    quant.add_argument(
+        "-trans_test_scope",
+        dest="quantTransTestScope",
+        choices=("both", "global"),
+        default="both",
+        help="Descriptive trans statistic scope. Default: both.",
     )
     quant.add_argument(
         "-domains",
@@ -2776,6 +3224,14 @@ Examples:
         type=str,
         help=
         "The _loop.txt file generated by cLoops2 callLoops or callDiffLoops."
+    )
+    anaLoops.add_argument(
+        "-mode",
+        dest="annotationMode",
+        choices=("cis", "trans", "all"),
+        default="cis",
+        help=("Annotate cis, directional trans, or both loop categories. "
+              "Default: cis."),
     )
     anaLoops.add_argument(
         "-gtf",
@@ -3096,6 +3552,7 @@ def main():
                 cut=cliParser.cut,
                 mcut=cliParser.mcut,
                 ext=cliParser.bed_ext,
+                mode=cliParser.dumpMode,
             )
 
 
@@ -3108,6 +3565,7 @@ def main():
                 cut=cliParser.cut,
                 mcut=cliParser.mcut,
                 ext=cliParser.bedpe_ext,
+                mode=cliParser.dumpMode,
             )
 
         #convert to .hic 
@@ -3130,6 +3588,7 @@ def main():
                 cut=cliParser.cut,
                 mcut=cliParser.mcut,
                 ext=cliParser.washU_ext,
+                mode=cliParser.dumpMode,
             )
         #convert to washU track
         if cliParser.ucsc:
@@ -3144,6 +3603,7 @@ def main():
                 cut=cliParser.cut,
                 mcut=cliParser.mcut,
                 ext=cliParser.ucsc_ext,
+                mode=cliParser.dumpMode,
             )
         #convert to bedGraph
         if cliParser.bdg:
@@ -3157,6 +3617,25 @@ def main():
                 pe=cliParser.bdg_pe,
             )
         #convert to matrix txt file
+        if cliParser.mat and cliParser.transMat:
+            logger.error("Use either -mat or -trans_mat, not both.")
+            raise SystemExit(2)
+        if cliParser.transMat:
+            ignored = []
+            if cliParser.corr:
+                ignored.append("-corr")
+            if cliParser.norm:
+                ignored.append("-norm")
+            if cliParser.method != "obs":
+                ignored.append("-m")
+            if ignored:
+                logger.error(
+                    "-trans_mat uses -trans_mat_method and does not support "
+                    "cis matrix options: %s" % ", ".join(ignored))
+                raise SystemExit(2)
+            if cliParser.transMatSparse and cliParser.log:
+                logger.error("-trans_mat_sparse cannot be combined with -log.")
+                raise SystemExit(2)
         if cliParser.mat:
             ixy2mat(
                 cliParser.predir,
@@ -3173,6 +3652,27 @@ def main():
                 corr=cliParser.corr,
                 norm=cliParser.norm,
             )
+        if cliParser.transMat:
+            try:
+                ixy2transmat(
+                    cliParser.predir,
+                    cliParser.fnOut,
+                    logger,
+                    chrom=cliParser.chrom,
+                    x_start=cliParser.start,
+                    x_end=cliParser.end,
+                    y_start=cliParser.matYStart,
+                    y_end=cliParser.matYEnd,
+                    x_res=cliParser.mat_res,
+                    y_res=cliParser.matYRes,
+                    method=cliParser.transMatMethod,
+                    log=cliParser.log,
+                    sparse=cliParser.transMatSparse,
+                    max_dense_cells=cliParser.matMaxDenseCells,
+                )
+            except (FileNotFoundError, OSError, ValueError) as error:
+                logger.error("trans matrix export failed: %s" % error)
+                raise SystemExit(1)
         if cliParser.virtual4C:
             ixy2virtual4C(
                 cliParser.predir,
@@ -3449,9 +3949,10 @@ def main():
     #11. filter PETs
     if cmd == "filterPETs":
         start = datetime.now()
-        report = "Command: cLoops2 {} -d {} -peak {} -loop {} -p {} -o {} -gap {} -singleton {} -bs {} -knn {} -eps {} -minPts {} -iv {} -both {}".format(
+        report = "Command: cLoops2 {} -d {} -peak {} -loop {} -mode {} -p {} -o {} -gap {} -singleton {} -bs {} -knn {} -eps {} -minPts {} -iv {} -both {}".format(
             cmd, cliParser.predir, cliParser.fbed, cliParser.floop,
-            cliParser.cpu, cliParser.fnOut, cliParser.gap, cliParser.singleton, 
+            cliParser.filterMode, cliParser.cpu, cliParser.fnOut,
+            cliParser.gap, cliParser.singleton,
             cliParser.binSize, cliParser.knn, cliParser.eps, 
             cliParser.minPts, cliParser.iv, cliParser.both)
         logger.info(report)
@@ -3484,6 +3985,11 @@ def main():
             r = "No filtering option selected or multiple filtering options selected, only one is allowed. Return."
             logger.error(r)
             return
+        if cliParser.filterMode != "cis" and not (
+                cliParser.floop or cliParser.fbed):
+            logger.error(
+                "filterPETs -mode trans/all is valid with -loops or -peaks.")
+            raise SystemExit(2)
 
         #prepare output directory
         foutdir = cliParser.fnOut
@@ -3497,13 +4003,14 @@ def main():
         #filter by peaks
         if cliParser.fbed != "" and os.path.isfile(cliParser.fbed):
             filterPETsByPeaks(cliParser.predir, cliParser.fbed, foutdir,
-                              cliParser.cpu, cliParser.iv, cliParser.gap)
+                              cliParser.cpu, cliParser.iv, cliParser.gap,
+                              mode=cliParser.filterMode)
 
         #filter by loops
         if cliParser.floop != "" and os.path.isfile(cliParser.floop):
             filterPETsByLoops(cliParser.predir, cliParser.floop, foutdir,
                               cliParser.cpu, iv=cliParser.iv, gap=cliParser.gap,
-                              both=cliParser.both
+                              both=cliParser.both, mode=cliParser.filterMode
                               )
 
         #filter by singleton
@@ -3528,8 +4035,10 @@ def main():
     #12. sample PETs
     if cmd == "samplePETs":
         start = datetime.now()
-        report = "Command: cLoops2 {} -d {} -o {} -tot {} -p {} ".format(
+        report = "Command: cLoops2 {} -d {} -o {} -tot {} -mode {} " \
+                 "-seed {} -p {} ".format(
             cmd, cliParser.predir, cliParser.fnOut, cliParser.tot,
+            cliParser.sampleMode, cliParser.sampleSeed,
             cliParser.cpu)
         logger.info(report)
 
@@ -3538,17 +4047,23 @@ def main():
             logger.error("-d is required, return.")
             return
 
-        #prepare output directory
         foutdir = cliParser.fnOut
-        if not os.path.exists(foutdir):
-            os.mkdir(foutdir)
-        elif len(os.listdir(foutdir)) > 0:
-            r = "Working directory %s exists and not empty. Return." % foutdir
-            logger.error(r)
-            return
-
-        #do the job
-        samplePETs(cliParser.predir, foutdir, cliParser.tot, cpu=cliParser.cpu)
+        # The API completes all source validation and allocation before it
+        # creates the destination.  Expected user errors become a concise
+        # non-zero CLI failure rather than a successful return with an empty
+        # output directory.
+        try:
+            samplePETs(
+                cliParser.predir,
+                foutdir,
+                cliParser.tot,
+                cpu=cliParser.cpu,
+                mode=cliParser.sampleMode,
+                seed=cliParser.sampleSeed,
+            )
+        except (FileNotFoundError, OSError, ValueError) as error:
+            logger.error("samplePETs failed: %s" % error)
+            raise SystemExit(1)
 
         end = datetime.now()
         logger.info("cLoops2 %s finished. Used time: %s." %
@@ -3639,7 +4154,15 @@ def main():
     if cmd == "callLoops":
         start = datetime.now()
 
-        report = "Command: cLoops2 {} -d {} -eps {} -minPts {} -p {} -o {} -cut {} -mcut {} -filter {} -i {} -j {} -w {} -hic {} -max_cut {} -trans {} -emPair {}".format(
+        loop_mode = cliParser.loopMode
+        if cliParser.trans:
+            if cliParser.loopMode != "cis":
+                logger.error("Use either legacy -trans or -mode, not both.")
+                raise SystemExit(2)
+            loop_mode = "all"
+            logger.warning("callLoops -trans is deprecated; use -mode all.")
+
+        report = "Command: cLoops2 {} -d {} -eps {} -minPts {} -p {} -o {} -cut {} -mcut {} -filter {} -i {} -j {} -w {} -hic {} -max_cut {} -mode {} -emPair {}".format(
             cmd, 
             cliParser.predir, 
             cliParser.eps, 
@@ -3654,7 +4177,7 @@ def main():
             cliParser.washU, 
             cliParser.hic, 
             cliParser.max_cut,
-            cliParser.trans,
+            loop_mode,
             cliParser.emPair,
         )
         logger.info(report)
@@ -3669,64 +4192,130 @@ def main():
             logger.error(r)
             return
 
-        #check eps and minPts
-        cliParser.eps = parseEps(cliParser.eps,cliParser.emPair)
-        if len(cliParser.eps) == 1 and cliParser.eps[0] == 0:
-            logger.error("Input eps is 0. Return.")
-            return
-        cliParser.minPts = parseMinpts(cliParser.minPts,cliParser.emPair)
-        if len(cliParser.minPts) == 1 and cliParser.minPts[0] == 0:
-            logger.error("Input minPts is 0. Return.")
-            return
+        if cliParser.transCandidates and loop_mode == "cis":
+            logger.error("-trans_candidates requires -mode trans or -mode all.")
+            raise SystemExit(2)
+        if cliParser.transSplit and loop_mode == "cis":
+            logger.error("-trans_split requires -mode trans or -mode all.")
+            raise SystemExit(2)
+        if cliParser.transCandidates and cliParser.transSplit:
+            logger.error("-trans_candidates and -trans_split are mutually exclusive.")
+            raise SystemExit(2)
+        if cliParser.transSplit and cliParser.transSplitSeed is None:
+            logger.error("-trans_split requires -trans_split_seed.")
+            raise SystemExit(2)
+        if not cliParser.transSplit and cliParser.transSplitSeed is not None:
+            logger.error("-trans_split_seed requires -trans_split.")
+            raise SystemExit(2)
+        if not 0.0 < cliParser.transValidationFraction < 1.0:
+            logger.error("-trans_validation_fraction must be in (0, 1).")
+            raise SystemExit(2)
 
-        #check if loops file exits
-        fout = cliParser.fnOut + "_loop.txt"
-        if os.path.isfile(fout):
-            r = "Output file %s exists, return." % fout
-            logger.error(r)
-            return
+        # Fixed-candidate trans-only testing does not run DBSCAN.  Every other
+        # route has a clustering branch and therefore needs eps/minPts.
+        needs_clustering = (
+            loop_mode in ("cis", "all") or not cliParser.transCandidates)
+        if needs_clustering:
+            cliParser.eps = parseEps(cliParser.eps, cliParser.emPair)
+            if len(cliParser.eps) == 1 and cliParser.eps[0] == 0:
+                logger.error("Input eps is 0.")
+                raise SystemExit(2)
+            cliParser.minPts = parseMinpts(cliParser.minPts, cliParser.emPair)
+            if len(cliParser.minPts) == 1 and cliParser.minPts[0] == 0:
+                logger.error("Input minPts is 0.")
+                raise SystemExit(2)
+        else:
+            cliParser.eps = []
+            cliParser.minPts = []
 
-        #call cis loops
-        callCisLoops(
-            cliParser.predir,
-            cliParser.fnOut,
-            logger,
-            eps=cliParser.eps,
-            minPts=cliParser.minPts,
-            cpu=cliParser.cpu,
-            cut=cliParser.cut,
-            mcut=cliParser.mcut,
-            plot=cliParser.plot,
-            max_cut=cliParser.max_cut,
-            hic=cliParser.hic,
-            filter=cliParser.filterPETs,
-            ucsc=cliParser.ucsc,
-            juicebox=cliParser.juicebox,
-            washU=cliParser.washU,
-            emPair=cliParser.emPair,
-        )
+        with open(os.path.join(cliParser.predir, "petMeta.json")) as handle:
+            loop_meta = json.load(handle)
+
+        if loop_mode in ("cis", "all"):
+            if not loop_meta.get("data", {}).get("cis"):
+                logger.error("No retained cis PETs are available for callLoops.")
+                raise SystemExit(1)
+            fout = cliParser.fnOut + "_loops.txt"
+            if os.path.isfile(fout):
+                logger.error("Output file %s exists, return." % fout)
+                raise SystemExit(1)
+            try:
+                callCisLoops(
+                    cliParser.predir,
+                    cliParser.fnOut,
+                    logger,
+                    eps=cliParser.eps,
+                    minPts=cliParser.minPts,
+                    cpu=cliParser.cpu,
+                    cut=cliParser.cut,
+                    mcut=cliParser.mcut,
+                    plot=cliParser.plot,
+                    max_cut=cliParser.max_cut,
+                    hic=cliParser.hic,
+                    filter=cliParser.filterPETs,
+                    ucsc=cliParser.ucsc,
+                    juicebox=cliParser.juicebox,
+                    washU=cliParser.washU,
+                    emPair=cliParser.emPair,
+                )
+            except (FileNotFoundError, OSError, ValueError) as error:
+                logger.error("cis loop calling failed: %s" % error)
+                raise SystemExit(1)
         
         #call trans loops
         #check if loops file exits
-        if cliParser.trans:
-            fout = cliParser.fnOut + "_trans_loop.txt"
+        if loop_mode in ("trans", "all"):
+            if (not loop_meta.get("data", {}).get("trans") and
+                    not cliParser.transCandidates):
+                logger.error(
+                    "No retained trans PETs are available. cLoops2 pre does "
+                    "not retain them by default; rerun pre -trans and ensure "
+                    "the chromosome whitelist contains both PET ends.")
+                raise SystemExit(1)
+            if cliParser.transCandidates:
+                if not os.path.isfile(cliParser.transCandidates):
+                    logger.error("Trans candidate file %s does not exist." %
+                                 cliParser.transCandidates)
+                    raise SystemExit(1)
+                if not cliParser.transCandidateSource.strip():
+                    logger.error(
+                        "-trans_candidate_source is required for formal "
+                        "fixed-candidate testing.")
+                    raise SystemExit(2)
+                fout = cliParser.fnOut + "_trans_loops.txt"
+            elif cliParser.transSplit:
+                fout = cliParser.fnOut + "_trans_loops.txt"
+            else:
+                fout = cliParser.fnOut + "_trans_candidates.txt"
             if os.path.isfile(fout):
-                r = "Output file %s exists, return." % fout
-                logger.error(r)
-                return
+                logger.error("Output file %s exists, return." % fout)
+                raise SystemExit(1)
 
             #call loops
-            callTransLoops(
-                cliParser.predir,
-                cliParser.fnOut,
-                logger,
-                eps=cliParser.eps,
-                minPts=cliParser.minPts,
-                cpu=cliParser.cpu,
-                filter=cliParser.filterPETs,
-                washU=cliParser.washU,
-                juicebox=cliParser.juicebox,
-            )
+            try:
+                callTransLoops(
+                    cliParser.predir,
+                    cliParser.fnOut,
+                    logger,
+                    eps=cliParser.eps,
+                    minPts=cliParser.minPts,
+                    cpu=cliParser.cpu,
+                    filter=cliParser.filterPETs,
+                    washU=cliParser.washU,
+                    juicebox=cliParser.juicebox,
+                    candidate_file=(cliParser.transCandidates or None),
+                    candidate_source=(cliParser.transCandidateSource or None),
+                    local_pad=cliParser.transLocalPad,
+                    test_scope=cliParser.transTestScope,
+                    adjustment=cliParser.transMtc,
+                    alpha=cliParser.transAlpha,
+                    split_validation=cliParser.transSplit,
+                    split_seed=cliParser.transSplitSeed,
+                    validation_fraction=cliParser.transValidationFraction,
+                )
+            except (FileNotFoundError, OSError, ValueError) as error:
+                logger.error("trans loop analysis failed: %s" % error)
+                raise SystemExit(1)
 
 
         end = datetime.now()
@@ -3736,6 +4325,67 @@ def main():
     #15. call differentially enriched loops
     if cmd == "callDiffLoops":
         start = datetime.now()
+
+        if cliParser.diffMode == "trans":
+            report = (
+                "Command: cLoops2 {cmd} -mode trans -samples {samples} "
+                "-trans_candidates {candidates} -trans_candidate_source "
+                "{source} -reference {reference} -contrast {contrast} "
+                "-trans_method {method} -trans_offset {offset} "
+                "-trans_mtc {mtc} -trans_alpha {alpha} "
+                "-trans_prior_df {prior} -o {output}").format(
+                    cmd=cmd, samples=cliParser.diffSampleSheet,
+                    candidates=cliParser.diffTransCandidates,
+                    source=cliParser.diffTransCandidateSource,
+                    reference=cliParser.diffReference,
+                    contrast=cliParser.diffContrast,
+                    method=cliParser.diffTransMethod,
+                    offset=cliParser.diffTransOffset,
+                    mtc=cliParser.diffTransMtc,
+                    alpha=cliParser.diffTransAlpha,
+                    prior=cliParser.diffTransPriorDf,
+                    output=cliParser.fnOut)
+            logger.info(report)
+            if not cliParser.diffSampleSheet:
+                logger.error("trans differential analysis requires -samples")
+                raise SystemExit(2)
+            if not cliParser.diffTransCandidates:
+                logger.error(
+                    "trans differential analysis requires -trans_candidates")
+                raise SystemExit(2)
+            if not cliParser.diffTransCandidateSource:
+                logger.error(
+                    "trans differential analysis requires "
+                    "-trans_candidate_source")
+                raise SystemExit(2)
+            try:
+                results, paths = call_trans_diff(
+                    cliParser.diffSampleSheet,
+                    cliParser.diffTransCandidates,
+                    cliParser.fnOut,
+                    cliParser.diffTransCandidateSource,
+                    reference=(cliParser.diffReference or None),
+                    contrast=(cliParser.diffContrast or None),
+                    method=cliParser.diffTransMethod,
+                    offset_scope=cliParser.diffTransOffset,
+                    adjustment=cliParser.diffTransMtc,
+                    alpha=cliParser.diffTransAlpha,
+                    prior_df=cliParser.diffTransPriorDf)
+            except (FileNotFoundError, ImportError, OSError, ValueError) as error:
+                logger.error("trans differential analysis failed: %s" % error)
+                raise SystemExit(1)
+            biological = sum(
+                result.significant is True and result.biological_inference
+                for result in results)
+            logger.info(
+                "Trans differential analysis wrote %s candidates (%s "
+                "biological NB calls); raw counts/exposures and an edgeR QL "
+                "script are available at %s." %
+                (len(results), biological, paths["counts"]))
+            end = datetime.now()
+            logger.info("cLoops2 %s finished. Used time: %s." %
+                        (cmd, end - start) + "\n" * 3)
+            return
 
         report = "Command: cLoops2 {} -tloop {} -cloop {} -td {} -cd {} -pcut {} -igp {} -noPCorr {} -fdr {} -o {} -p {} -j {} -w {} -customize {} -cacut {} -cmcut {} -vmin {} -vmax {} -cmap {}".format(
                cmd, 
@@ -3976,8 +4626,54 @@ def main():
             if not os.path.isfile(cliParser.fixy):
                 logger.info("ERROR! -f assigned %s but not exists. Return."%cliParser.fixy)
                 return
+            if cliParser.plotTrans:
+                unsupported = []
+                for enabled, name in (
+                        (cliParser.triu, "-triu"),
+                        (cliParser.corr, "-corr"),
+                        (cliParser.eig, "-eig"),
+                        (cliParser.arch, "-arch"),
+                        (cliParser.scatter, "-scatter"),
+                        (cliParser.virtual4C, "-virtual4C"),
+                        (cliParser.oneD, "-1D"),
+                        (cliParser.norm, "-norm"),
+                        (cliParser.method != "obs", "-m"),
+                        (cliParser.cut != 0, "-cut"),
+                        (cliParser.mcut != -1, "-mcut"),
+                        (bool(cliParser.fdomain), "-domains"),
+                        (bool(cliParser.floop), "-loops"),
+                        (bool(cliParser.gtf), "-gtf"),
+                        (bool(bws), "-bws"),
+                        (bool(beds), "-beds")):
+                    if enabled:
+                        unsupported.append(name)
+                if unsupported:
+                    logger.error(
+                        "Trans rectangular plot does not support cis-only "
+                        "options: %s" % ", ".join(unsupported))
+                    raise SystemExit(2)
+                try:
+                    plotTransMatrix(
+                        cliParser.fixy,
+                        cliParser.fnOut,
+                        x_start=cliParser.start,
+                        x_end=cliParser.end,
+                        y_start=cliParser.plotYStart,
+                        y_end=cliParser.plotYEnd,
+                        x_res=cliParser.binSize,
+                        y_res=cliParser.plotYBinSize,
+                        method=cliParser.plotTransMethod,
+                        log=cliParser.log,
+                        max_dense_cells=cliParser.plotMaxDenseCells,
+                        vmin=cliParser.vmin,
+                        vmax=cliParser.vmax,
+                        width=cliParser.figWidth,
+                    )
+                except (FileNotFoundError, OSError, ValueError) as error:
+                    logger.error("trans matrix plot failed: %s" % error)
+                    raise SystemExit(1)
             #plot heatmap
-            if cliParser.arch == False and cliParser.scatter == False:
+            elif cliParser.arch == False and cliParser.scatter == False:
                 plotMatHeatmap(
                     cliParser.fixy,
                     cliParser.fnOut,
@@ -4303,12 +4999,135 @@ def main():
         end = datetime.now()
         logger.info("cLoops2 %s finished. Used time: %s." %
                     (cmd, end - start) + "\n" * 3)
-    
+
+    if cmd == "transAgg":
+        start = datetime.now()
+        paths = [cliParser.fnOut + "_trans_agg.npz",
+                 cliParser.fnOut + "_trans_agg.json"]
+        if cliParser.transAggPlot:
+            paths.append(cliParser.fnOut + "_trans_agg.pdf")
+        if not os.path.isdir(cliParser.predir):
+            logger.error("transAgg requires a valid -d directory.")
+            raise SystemExit(2)
+        if not os.path.isfile(cliParser.transAggLoops):
+            logger.error("transAgg -loops file does not exist.")
+            raise SystemExit(2)
+        if any(os.path.exists(path) for path in paths):
+            logger.error("transAgg output exists; refusing to overwrite.")
+            raise SystemExit(1)
+        try:
+            features = read_trans_features(cliParser.transAggLoops)
+            result = aggregate_trans_loops(
+                cliParser.predir, features,
+                x_bin_size=cliParser.transAggXBs,
+                y_bin_size=cliParser.transAggYBs,
+                x_flank_bins=cliParser.transAggXFlank,
+                y_flank_bins=cliParser.transAggYFlank,
+                method=cliParser.transAggMethod,
+                normalization=cliParser.transAggNorm,
+                skip_zeros=cliParser.transAggSkipZeros,
+                edge_policy=cliParser.transAggEdgePolicy,
+                max_dense_cells=cliParser.transAggMaxCells)
+            os.makedirs(os.path.dirname(os.path.abspath(cliParser.fnOut)),
+                        exist_ok=True)
+            write_trans_aggregate(result, cliParser.fnOut)
+            if cliParser.transAggPlot:
+                plot_trans_aggregate(result,
+                                     cliParser.fnOut + "_trans_agg.pdf")
+        except (FileNotFoundError, KeyError, OSError, TypeError,
+                ValueError) as error:
+            logger.error("transAgg failed: %s" % error)
+            raise SystemExit(1)
+        logger.info("transAgg used %s/%s directional features." %
+                    (result.n_used, result.n_input))
+        logger.info("cLoops2 %s finished. Used time: %s." %
+                    (cmd, datetime.now() - start) + "\n" * 3)
+
+    if cmd == "transViewpoint":
+        start = datetime.now()
+        paths = [cliParser.fnOut + "_trans_viewpoint.tsv",
+                 cliParser.fnOut + "_trans_viewpoint.json"]
+        if cliParser.transVpPlot:
+            paths.append(cliParser.fnOut + "_trans_viewpoint.pdf")
+        if not os.path.isdir(cliParser.predir):
+            logger.error("transViewpoint requires a valid -d directory.")
+            raise SystemExit(2)
+        if any(os.path.exists(path) for path in paths):
+            logger.error("transViewpoint output exists; refusing to overwrite.")
+            raise SystemExit(1)
+        try:
+            result = trans_viewpoint(
+                cliParser.predir, cliParser.transVpChromX,
+                cliParser.transVpChromY, cliParser.transVpAxis,
+                cliParser.transVpAnchorStart, cliParser.transVpAnchorEnd,
+                cliParser.transVpTargetStart, cliParser.transVpTargetEnd,
+                cliParser.transVpBs, method=cliParser.transVpMethod,
+                normalization=cliParser.transVpNorm,
+                context_start=cliParser.transVpContextStart,
+                context_end=cliParser.transVpContextEnd,
+                record_id=cliParser.transVpRecordId,
+                max_bins=cliParser.transVpMaxBins)
+            os.makedirs(os.path.dirname(os.path.abspath(cliParser.fnOut)),
+                        exist_ok=True)
+            write_trans_viewpoint(result, cliParser.fnOut)
+            if cliParser.transVpPlot:
+                plot_trans_viewpoint(
+                    result, cliParser.fnOut + "_trans_viewpoint.pdf")
+        except (FileNotFoundError, KeyError, OSError, TypeError,
+                ValueError) as error:
+            logger.error("transViewpoint failed: %s" % error)
+            raise SystemExit(1)
+        logger.info("cLoops2 %s finished. Used time: %s." %
+                    (cmd, datetime.now() - start) + "\n" * 3)
+
+    if cmd == "transMontage":
+        start = datetime.now()
+        paths = [cliParser.fnOut + "_trans_montage.tsv",
+                 cliParser.fnOut + "_trans_montage.npz",
+                 cliParser.fnOut + "_trans_montage.json"]
+        if cliParser.transMonPlot:
+            paths.append(cliParser.fnOut + "_trans_montage.pdf")
+        if not os.path.isdir(cliParser.predir):
+            logger.error("transMontage requires a valid -d directory.")
+            raise SystemExit(2)
+        if any(os.path.exists(path) for path in paths):
+            logger.error("transMontage output exists; refusing to overwrite.")
+            raise SystemExit(1)
+        try:
+            half_open = not cliParser.transMonClosed
+            x_regions = read_axis_regions(
+                cliParser.transMonXRegions,
+                expected_chrom=cliParser.transMonChromX,
+                bed_half_open=half_open)
+            y_regions = read_axis_regions(
+                cliParser.transMonYRegions,
+                expected_chrom=cliParser.transMonChromY,
+                bed_half_open=half_open)
+            result = trans_montage(
+                cliParser.predir, cliParser.transMonChromX,
+                cliParser.transMonChromY, x_regions, y_regions,
+                method=cliParser.transMonMethod,
+                normalization=cliParser.transMonNorm,
+                record_id=cliParser.transMonRecordId,
+                max_cells=cliParser.transMonMaxCells)
+            os.makedirs(os.path.dirname(os.path.abspath(cliParser.fnOut)),
+                        exist_ok=True)
+            write_trans_montage(result, cliParser.fnOut)
+            if cliParser.transMonPlot:
+                plot_trans_montage(
+                    result, cliParser.fnOut + "_trans_montage.pdf")
+        except (FileNotFoundError, KeyError, OSError, TypeError,
+                ValueError) as error:
+            logger.error("transMontage failed: %s" % error)
+            raise SystemExit(1)
+        logger.info("cLoops2 %s finished. Used time: %s." %
+                    (cmd, datetime.now() - start) + "\n" * 3)
+
     #20. quantify peaks,loops and domains
     if cmd == "quant":
         start = datetime.now()
 
-        report = "Command cLoops2 {cmd} -d {predir} -o {output} -cut {cut} -mcut {mcut} -p {cpu} -peaks {peakf} -loops {loopf} -offp {offp} -domains {domainf} -domain_bs {bs} -domain_ws {ws} -domain_bdg {dbdg}".format(
+        report = "Command cLoops2 {cmd} -d {predir} -o {output} -cut {cut} -mcut {mcut} -p {cpu} -peaks {peakf} -loops {loopf} -offp {offp} -mode {mode} -domains {domainf} -domain_bs {bs} -domain_ws {ws} -domain_bdg {dbdg}".format(
             cmd=cmd,
             predir=cliParser.predir,
             output=cliParser.fnOut,
@@ -4318,6 +5137,7 @@ def main():
             peakf=cliParser.peakf,
             loopf=cliParser.loopf,
             offp=cliParser.offp,
+            mode=cliParser.quantMode,
             domainf=cliParser.domainf,
             bs=cliParser.domainBinSize,
             ws=cliParser.domainWinSize,
@@ -4354,16 +5174,23 @@ def main():
                 logger.error("%s not exists! Return."%cliParser.peakf)
         if cliParser.loopf != "":
             if os.path.isfile(cliParser.loopf):
-                quantLoops(
-                    cliParser.predir,
-                    cliParser.loopf,
-                    cliParser.fnOut,
-                    logger,
-                    cut=cliParser.cut,
-                    mcut=cliParser.mcut,
-                    cpu=cliParser.cpu,
-                    offp=cliParser.offp,
-                )
+                try:
+                    quantLoops(
+                        cliParser.predir,
+                        cliParser.loopf,
+                        cliParser.fnOut,
+                        logger,
+                        cut=cliParser.cut,
+                        mcut=cliParser.mcut,
+                        cpu=cliParser.cpu,
+                        offp=cliParser.offp,
+                        mode=cliParser.quantMode,
+                        transLocalPad=cliParser.quantTransLocalPad,
+                        transTestScope=cliParser.quantTransTestScope,
+                    )
+                except (FileNotFoundError, OSError, ValueError) as error:
+                    logger.error("loop quantification failed: %s" % error)
+                    raise SystemExit(1)
             else:
                 logger.error("%s not exists! Return."%cliParser.loopf)
         if cliParser.domainf != "":
@@ -4391,9 +5218,10 @@ def main():
     if cmd == "anaLoops":
         start = datetime.now()
 
-        report = "Command cLoops2 {cmd} -loops {floop} -o {output} -gtf {gtf} -tid {tid} -p {cpu} -pdis {pdis} -net {net} -gap {gap}".format(
+        report = "Command cLoops2 {cmd} -loops {floop} -mode {mode} -o {output} -gtf {gtf} -tid {tid} -p {cpu} -pdis {pdis} -net {net} -gap {gap}".format(
             cmd=cmd,
             floop=cliParser.floop,
+            mode=cliParser.annotationMode,
             output=cliParser.fnOut,
             gtf=cliParser.gtf,
             tid=cliParser.tid,
@@ -4418,6 +5246,7 @@ def main():
             pdis=cliParser.pdis,
             net=cliParser.net,
             gap=cliParser.gap,
+            mode=cliParser.annotationMode,
         )
 
         end = datetime.now()

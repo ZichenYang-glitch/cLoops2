@@ -19,7 +19,8 @@ groups:
     build_mode: "pre"
   k562:
     replicates: ["k562_bio1", "k562_bio2"]
-    build_mode: "combine"
+    # Formal calling branches require a current multi-file pre root.
+    build_mode: "pre"
 
 primary_group: "gm"
 secondary_group: "k562"
@@ -32,7 +33,34 @@ normalization:
   groups: ["gm", "k562"]
   output_suffix: "_norm"
   mode: "min_unique_pets"
+  emit: "all"
+  seed: 123
   # target depth = floor(min(Unique PETs) / 1,000,000) * 1,000,000
+
+trans:
+  # true adds pre -trans, keeps mode=all through normalization and tracks
+  # exploratory trans candidate outputs.
+  enabled: false
+  retain_in_pre: false
+  # exploratory writes candidates with p/q=NA; split uses held-out PETs and
+  # writes formally tested _trans_loops.txt.
+  caller_mode: "split"
+  split_seed: 123
+  validation_fraction: 0.5
+  differential:
+    # Formal differential inference always quantifies the raw biological
+    # sample directories; normalized/pooled group counts are not replicates.
+    enabled: false
+    groups: ["gm", "k562"]
+    reference: "gm"
+    contrast: "k562"
+    candidates: "../references/independent_trans_candidates.tsv"
+    candidate_source: "independent cohort or pre-registered rectangles"
+    method: "auto"
+    offset: "global"
+    mtc: "BH"
+    alpha: 0.05
+    prior_df: 10
 
 compare:
   enabled: true
@@ -89,6 +117,8 @@ params:
   est_sim: "-bs 1000 -plot -p 6"
   call_peaks: "-eps 50,100 -minPts 10 -mcut 1000 -split"
   call_loops: "-eps 200,500,1000 -minPts 10 -w -j"
+  call_trans_loops: "-eps 200,500,1000 -minPts 10 -w -j"
+  call_trans_diff: ""
   call_domains: "-bs 5000 -ws 100000,250000"
   compare_sample_pets: "-p 4"
   compare_call_loops: "-eps 200,500,1000 -minPts 10 -w -j"

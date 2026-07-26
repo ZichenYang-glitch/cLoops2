@@ -15,19 +15,32 @@
 
 ## 文件
 
-- [Snakefile](/home/irenadler/cLoops2/snakemake_core/Snakefile)
-- [config.yaml.example](/home/irenadler/cLoops2/snakemake_core/config.yaml.example)
+- [Snakefile](Snakefile)
+- [config.yaml.example](config.yaml.example)
 
 ## 当前能力
 
 - 对所有样本做 `cLoops2 pre`
 - 对组数据按两种方式构建：
   - `pre`: 直接把多个 replicate 输入给 `cLoops2 pre`
-  - `combine`: 先单样本 `pre`，再 `cLoops2 combine`
+  - `combine`: 先单样本 `pre`，再 `cLoops2 combine`；仅用于物理合并、探索和可视化，不自动认证 formal inference
 - 运行 `qc`
 - 可选地对指定组运行 `samplePETs`
   - 自动读取各组 `petMeta.json` 的 `Unique PETs`
   - 以最小 `Unique PETs` 为基准，并向下取整到整百万作为统一深度
+  - 结构化指定 `normalization.emit/seed`；trans workflow 强制 `emit: all`
+- 可选 trans 最小链：
+  - `trans.enabled: true` 自动启用 `pre -trans`
+  - 核对各组 Retention/whitelist/cutoff 一致
+  - `caller_mode: exploratory` 跟踪 `_trans_candidates.txt`（p/q=NA）
+  - `caller_mode: split` 使用固定 seed 的 held-out PET 并跟踪正式
+    `_trans_loops.txt`
+- 可选 replicate-aware trans differential 分支：
+  - 从两个 group 的 replicate 名单生成 raw sample sheet
+  - 要求 independent fixed candidate file 与 provenance declaration
+  - 逐 raw biological sample 输出 counts、`Npair`、`readsA/B` 和 exposure
+  - 输出 NB baseline 结果与可直接运行的 edgeR QL 脚本
+  - 不把 normalized/pooled group 目录当作 biological replicates
 - 运行 `estRes / estDis / estSim`
 - 对指定 `calling_groups` 运行：
   - `callPeaks`
@@ -48,7 +61,7 @@
 
 ## 配置方式
 
-目录里已经给了一份可直接修改的 [config.yaml](/home/irenadler/cLoops2/snakemake_core/config.yaml)，模板保留在 [config.yaml.example](/home/irenadler/cLoops2/snakemake_core/config.yaml.example)。
+目录里已经给了一份可直接修改的 [config.yaml](config.yaml)，模板保留在 [config.yaml.example](config.yaml.example)。
 
 如果你想从模板重建：
 
@@ -66,6 +79,12 @@ cp config.yaml.example config.yaml
 - `chrom_whitelist`: 不同物种的 canonical chromosome 白名单
 - `samples`: 样本名到 BEDPE 文件路径
 - `groups`: 分组、replicate、组构建方式
+- `trans.enabled/retain_in_pre`: 是否保留并分析 trans PET
+- `trans.caller_mode/split_seed/validation_fraction`: de novo trans 是探索
+  模式还是 discovery/validation split 正式模式
+- `trans.differential.*`: raw-sample trans differential 的 groups、固定候选、
+  candidate provenance、reference/contrast、offset 和 MTC
+- `normalization.emit/seed`: 整体采样的物理输出类别和固定 seed
 - `primary_group`: 主分析组
 - `calling_groups`: 哪些组执行 peaks/loops/domains
 - `target_chroms`: 目标染色体
@@ -154,6 +173,33 @@ params:
 snakemake --cores 4 annotation
 snakemake --cores 4 annotate_loops
 ```
+
+## 关于 trans differential
+
+这一分支默认关闭。启用时必须同时启用 `trans.enabled` 和
+`retain_in_pre`，并提供独立于当前待检验 X–Y pairing 的固定候选：
+
+```yaml
+trans:
+  enabled: true
+  retain_in_pre: true
+  differential:
+    enabled: true
+    groups: ["gm", "k562"]
+    reference: "gm"
+    contrast: "k562"
+    candidates: "../references/independent_trans_candidates.tsv"
+    candidate_source: "independent discovery cohort"
+    method: "auto"
+    offset: "global"
+    mtc: "BH"
+```
+
+工作流使用 `groups.*.replicates` 指向的单样本 `pre -trans` 目录进行计数，
+不会使用 group pooling 或 `samplePETs` 输出作为 NB replicates。`auto` 在每组
+至少两个 biological samples 时运行 NB baseline；单样本时只产生明确标记为
+非生物学推断的 exact 技术抽样结果。主输出还包括一个 edgeR QL R 脚本；
+执行该脚本需要运行环境自行安装 R 与 edgeR。
 
 `plot` 的 region 现在也不再埋在 `params` 字符串里，而是单独放在 `plot_regions`：
 
@@ -252,9 +298,11 @@ snakemake --cores 4 results_snakemake/cloops2_core/reports/gm_loops.txt
 
 这个版本依然保持了几个保守设计：
 
-- 组装方式仍然兼容你现在 bash 版里的 `pre` / `combine` 两种逻辑
+- `pre` / `combine` 都保留物理构建能力；但正式 calling group 必须使用 current multi-file `pre`。`combine` 及其后续 sample 会继承 `formal_inference_eligible=false`，旧 combine 若缺 `Retention` 更不能安全猜测 `-trans`、whitelist 或 cutoff。
 - 对 `estimate` 阶段先使用 marker 文件表示完成状态，避免过早绑定不稳定的输出文件名
 - 深度标准化通过 `petMeta.json` 的 `Unique PETs` 自动确定目标值
+
+当前 trans rule 只覆盖 exploratory candidate discovery。独立固定候选 formal test、per-sample raw count matrix、trans agg/annotation/differential 是后续 Phase 2/3，不应把 pooled/downsampled counts 当 biological replicates。
 
 如果你下一步继续推进，最自然的扩展顺序是：
 

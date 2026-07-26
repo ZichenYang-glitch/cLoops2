@@ -208,6 +208,134 @@ class XY(object):
         """
 
 
+class TransContactIndex(object):
+    """Axis-aware index for one inter-chromosomal ``.ixy`` matrix.
+
+    A trans ``.ixy`` record is directional: column 0 belongs to ``chromX``
+    and column 1 belongs to ``chromY``.  Unlike :class:`XY`, this class never
+    treats the two columns as interchangeable.  Query intervals are closed
+    (``left <= coordinate <= right``), matching the historical ``XY`` query
+    convention used by cLoops2.
+
+    The input coordinates must be one-dimensional integer arrays with equal
+    length.  Empty inputs are accepted.  Stable sorted indexes make ties
+    deterministic while the original coordinate arrays remain unchanged.
+    Construction is ``O(N log N)``; an axis count is ``O(log N)`` and a
+    rectangle query is ``O(log N + min(kx, ky))`` after candidate filtering.
+    """
+
+    def __init__(self, xs, ys):
+        self._x = self._as_coordinates(xs, "xs")
+        self._y = self._as_coordinates(ys, "ys")
+        if self._x.shape[0] != self._y.shape[0]:
+            raise ValueError("xs and ys must contain the same number of PETs")
+
+        self.number = int(self._x.shape[0])
+        self._x_order = np.argsort(self._x, kind="mergesort")
+        self._y_order = np.argsort(self._y, kind="mergesort")
+        self._x_sorted = self._x[self._x_order]
+        self._y_sorted = self._y[self._y_order]
+
+    @staticmethod
+    def _as_coordinates(values, name):
+        """Validate and copy one coordinate axis as an ``int64`` array."""
+        values = np.asarray(values)
+        if values.ndim != 1:
+            raise ValueError("%s must be a one-dimensional array" % name)
+        # ``np.asarray([])`` has float dtype although there are no values to
+        # validate.  Treat an empty axis as a valid empty integer coordinate
+        # array, but reject non-integer populated inputs rather than silently
+        # truncating coordinates.
+        if values.size == 0:
+            return np.asarray(values, dtype=np.int64).copy()
+        if not np.issubdtype(values.dtype, np.integer):
+            raise TypeError("%s must contain integer coordinates" % name)
+        limits = np.iinfo(np.int64)
+        if np.any(values < limits.min) or np.any(values > limits.max):
+            raise OverflowError("%s coordinates exceed int64 range" % name)
+        return np.asarray(values, dtype=np.int64).copy()
+
+    @staticmethod
+    def _validate_interval(left, right):
+        if isinstance(left, (bool, np.bool_)) or not isinstance(
+                left, (int, np.integer)):
+            raise TypeError("interval boundaries must be integers")
+        if isinstance(right, (bool, np.bool_)) or not isinstance(
+                right, (int, np.integer)):
+            raise TypeError("interval boundaries must be integers")
+        left, right = int(left), int(right)
+        if left > right:
+            raise ValueError("interval left boundary must not exceed right")
+        return left, right
+
+    @classmethod
+    def from_matrix(cls, mat):
+        """Build an index from an integer matrix with exactly two columns."""
+        mat = np.asarray(mat)
+        if mat.ndim != 2 or mat.shape[1] != 2:
+            raise ValueError("trans contact matrix must have shape (n, 2)")
+        if mat.size > 0 and not np.issubdtype(mat.dtype, np.integer):
+            raise TypeError("trans contact matrix must contain integers")
+        return cls(mat[:, 0], mat[:, 1])
+
+    @staticmethod
+    def _axis_bounds(sorted_values, left, right):
+        left_i = np.searchsorted(sorted_values, left, side="left")
+        right_i = np.searchsorted(sorted_values, right, side="right")
+        return int(left_i), int(right_i)
+
+    def _axis_ids(self, axis, left, right):
+        left, right = self._validate_interval(left, right)
+        if axis == "x":
+            values, order = self._x_sorted, self._x_order
+        elif axis == "y":
+            values, order = self._y_sorted, self._y_order
+        else:
+            raise ValueError("axis must be 'x' or 'y'")
+        left_i, right_i = self._axis_bounds(values, left, right)
+        return order[left_i:right_i]
+
+    def count_x(self, left, right):
+        """Count PETs whose ``chromX`` coordinate is in a closed interval."""
+        left, right = self._validate_interval(left, right)
+        left_i, right_i = self._axis_bounds(self._x_sorted, left, right)
+        return right_i - left_i
+
+    def count_y(self, left, right):
+        """Count PETs whose ``chromY`` coordinate is in a closed interval."""
+        left, right = self._validate_interval(left, right)
+        left_i, right_i = self._axis_bounds(self._y_sorted, left, right)
+        return right_i - left_i
+
+    def query_rect_ids(self, x_left, x_right, y_left, y_right):
+        """Return original PET ids inside a directional X-by-Y rectangle.
+
+        The less populated one-dimensional query is used as the candidate
+        set, then filtered on the other axis.  Returned ids are sorted by
+        original row number, making results deterministic and convenient for
+        direct matrix indexing.
+        """
+        x_left, x_right = self._validate_interval(x_left, x_right)
+        y_left, y_right = self._validate_interval(y_left, y_right)
+        x_ids = self._axis_ids("x", x_left, x_right)
+        y_ids = self._axis_ids("y", y_left, y_right)
+
+        if x_ids.size <= y_ids.size:
+            candidates = x_ids
+            other = self._y[candidates]
+            keep = (other >= y_left) & (other <= y_right)
+        else:
+            candidates = y_ids
+            other = self._x[candidates]
+            keep = (other >= x_left) & (other <= x_right)
+        return np.sort(candidates[keep], kind="mergesort")
+
+    def count_rect(self, x_left, x_right, y_left, y_right):
+        """Count PETs inside a directional X-by-Y rectangle."""
+        return int(
+            self.query_rect_ids(x_left, x_right, y_left, y_right).shape[0])
+
+
 
 class Peak(object):
     """
@@ -375,6 +503,7 @@ class Exon(object):
 
 
 
+
 class Gene(object):
     """
     Gene or transcript.
@@ -397,5 +526,3 @@ class Gene(object):
                                                     self.strand,
                                                     self.name,
                                                     )
-
-

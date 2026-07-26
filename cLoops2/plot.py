@@ -25,6 +25,7 @@ __email__ = "caoyaqiang0410@gmail.com"
 import os
 import json
 import argparse
+import joblib
 from datetime import datetime
 from argparse import RawTextHelpFormatter
 
@@ -48,7 +49,8 @@ from cLoops2.ds import XY, Exon, Gene
 from cLoops2.settings import *
 from cLoops2.utils import getLogger
 from cLoops2.io import parseIxy, parseTxt2Loops
-from cLoops2.cmat import getObsMat, getExpMat, get1DSig, getBinMean, getVirtual4CSig
+from cLoops2.cmat import (getObsMat, getExpMat, get1DSig, getBinMean,
+                          getVirtual4CSig, getTransObsMat)
 
 
 def plotGmmEst(dis, ps, eps, fout):
@@ -1094,6 +1096,107 @@ def plotMatHeatmap(
     if not triu:
         pylab.tight_layout()
     pylab.savefig(fo + "_matrix.pdf")
+
+
+def plotTransMatrix(
+        f,
+        fo,
+        x_start=0,
+        x_end=-1,
+        y_start=0,
+        y_end=-1,
+        x_res=5000,
+        y_res=None,
+        method="obs",
+        log=False,
+        max_dense_cells=10000000,
+        vmin=None,
+        vmax=None,
+        width=5,
+):
+    """Plot a non-mirrored rectangular trans contact matrix.
+
+    The X and Y coordinates remain tied to their own chromosomes.  No cis
+    diagonal, triangular rotation, eigenvector or same-axis correlation is
+    defined here.  ``pair_oe`` and ``window_oe`` follow the two explicitly
+    different expected models used by :func:`cLoops2.dump.ixy2transmat`.
+    """
+    if method not in ("obs", "pair_oe", "window_oe"):
+        raise ValueError("trans plot method must be obs, pair_oe, or window_oe")
+    if y_res is None:
+        y_res = x_res
+    try:
+        xy = joblib.load(f, mmap_mode="r")
+    except Exception:
+        xy = joblib.load(f)
+    if (not isinstance(xy, np.ndarray) or xy.ndim != 2 or
+            xy.shape[1] != 2 or xy.shape[0] == 0):
+        raise ValueError("trans plot requires a non-empty integer (n, 2) ixy")
+    axes = os.path.basename(f).replace(".ixy", "").split("-")
+    if len(axes) != 2 or axes[0] == axes[1]:
+        raise ValueError("trans plot requires an unambiguous trans ixy filename")
+    chrom_x, chrom_y = axes
+    x_start = int(np.min(xy[:, 0])) if x_start in (-1, 0) else int(x_start)
+    x_end = int(np.max(xy[:, 0])) if x_end == -1 else int(x_end)
+    y_start = int(np.min(xy[:, 1])) if y_start in (-1, 0) else int(y_start)
+    y_end = int(np.max(xy[:, 1])) if y_end == -1 else int(y_end)
+    observed = getTransObsMat(
+        xy, x_start, x_end, y_start, y_end, x_res, y_res,
+        max_dense_cells=max_dense_cells)
+    matrix = observed.astype(float) if method != "obs" else observed
+    if method == "pair_oe":
+        x_values, y_values = np.asarray(xy[:, 0]), np.asarray(xy[:, 1])
+        x_bins = ((x_values - x_start) // x_res).astype(int)
+        y_bins = ((y_values - y_start) // y_res).astype(int)
+        valid_x = (x_values >= x_start) & (x_values <= x_end)
+        valid_y = (y_values >= y_start) & (y_values <= y_end)
+        rows = np.bincount(x_bins[valid_x],
+                           minlength=observed.shape[0])[:observed.shape[0]]
+        columns = np.bincount(
+            y_bins[valid_y], minlength=observed.shape[1])[:observed.shape[1]]
+        expected = np.outer(rows, columns) / float(xy.shape[0])
+        matrix = np.divide(observed,
+                           expected,
+                           out=np.zeros_like(expected, dtype=float),
+                           where=expected > 0)
+    elif method == "window_oe":
+        total = float(observed.sum())
+        expected = (np.outer(observed.sum(axis=1), observed.sum(axis=0)) /
+                    total if total > 0 else np.zeros_like(observed,
+                                                         dtype=float))
+        matrix = np.divide(observed,
+                           expected,
+                           out=np.zeros_like(expected, dtype=float),
+                           where=expected > 0)
+    label = {"obs": "Observed", "pair_oe": "Pair-global O/E",
+             "window_oe": "Window-conditional O/E"}[method]
+    if log:
+        matrix = np.log2(np.asarray(matrix, dtype=float) + 1.0)
+        label = "log2(%s + 1)" % label
+
+    height = max(2.5, float(width) * matrix.shape[0] /
+                 max(1, matrix.shape[1]))
+    fig, ax = pylab.subplots(1, 1, figsize=(width, height))
+    cmap = sns.light_palette("red", n_colors=9).as_hex()
+    cmap[0] = "#FFFFFF"
+    sns.heatmap(matrix,
+                ax=ax,
+                cmap=ListedColormap(cmap),
+                vmin=vmin,
+                vmax=vmax,
+                xticklabels=False,
+                yticklabels=False,
+                cbar_kws={"label": label})
+    ax.set_xlabel("%s:%s-%s (%s bp bins)" %
+                  (chrom_y, y_start, y_end, y_res))
+    ax.set_ylabel("%s:%s-%s (%s bp bins)" %
+                  (chrom_x, x_start, x_end, x_res))
+    ax.set_title("Directional trans contact matrix")
+    pylab.tight_layout()
+    path = fo + "_trans_matrix.pdf"
+    pylab.savefig(path)
+    pylab.close(fig)
+    return matrix
 
 
 def plotPETsArches(

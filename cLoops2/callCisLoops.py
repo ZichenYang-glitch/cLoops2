@@ -49,6 +49,10 @@ from cLoops2.plot import plotIntraCut
 #from cLoops2.blockDBSCAN import blockDBSCAN as DBSCAN
 from cLoops2.geo import checkLoopOverlap, combineLoops
 from cLoops2.io import parseIxy, ixy2pet, loops2juiceTxt, loops2washuTxt, updateJson, loops2txt, loops2ucscTxt, loops2NewWashuTxt
+from cLoops2.metadata import (CAP_FORMAL_INFERENCE,
+                              CAP_GLOBAL_NORMALIZATION,
+                              build_library_context,
+                              inspect_actual_counts)
 
 #gloabl settings
 logger = None
@@ -509,8 +513,17 @@ def callCisLoops(
         return
     ##step 0 prepare data and check directories
     metaf = predir + "/petMeta.json"
-    meta = json.loads(open(metaf).read())
-    tot = meta["Unique PETs"]
+    with open(metaf) as handle:
+        meta = json.load(handle)
+    context = build_library_context(
+        meta, actual_counts=inspect_actual_counts(meta))
+    if context.validity == "invalid":
+        raise ValueError("invalid PET metadata: %s" %
+                         ("; ".join(context.reasons) or "unknown reason"))
+    context.require(CAP_FORMAL_INFERENCE)
+    tot = (context.logical_total
+           if CAP_GLOBAL_NORMALIZATION in context.capabilities else
+           meta["Unique PETs"])
     if filter:
         logger.info(
             "-filter option chosed, will filter raw PETs based on called loops, for any PET that any end overlaps loop anchors will be kept. "

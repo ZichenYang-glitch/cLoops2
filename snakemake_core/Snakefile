@@ -1,5 +1,6 @@
 import os
 import json
+import shlex
 from pathlib import Path
 
 PROJECT = config["project_name"]
@@ -19,6 +20,33 @@ VIS = config.get("vis", {})
 REFERENCES = config.get("references", {})
 PLOT_REGIONS = config.get("plot_regions", {})
 ANNOTATION = config.get("annotation", {})
+TRANS = config.get("trans", {})
+TRANS_DIFF = TRANS.get("differential", {})
+
+
+def reject_structured_option(param_name, options):
+    tokens = shlex.split(str(PARAMS.get(param_name, "")))
+    conflicts = [option for option in options if option in tokens]
+    if conflicts:
+        raise ValueError(
+            f"params.{param_name} must not contain {', '.join(conflicts)}; "
+            "use the corresponding structured workflow configuration")
+
+
+reject_structured_option("sample_pets", ("-mode", "-seed"))
+reject_structured_option("call_loops", ("-mode", "-trans",
+                                         "-trans_candidates"))
+reject_structured_option("call_trans_loops", ("-mode", "-trans",
+                                               "-trans_candidates",
+                                               "-trans_split",
+                                               "-trans_split_seed",
+                                               "-trans_validation_fraction"))
+reject_structured_option("call_trans_diff", ("-mode", "-samples",
+                                              "-trans_candidates",
+                                              "-trans_candidate_source",
+                                              "-reference", "-contrast",
+                                              "-trans_method",
+                                              "-trans_offset", "-trans_mtc"))
 
 DATA_DIR = os.path.join(OUTPUT_ROOT, "datasets")
 REPORT_DIR = os.path.join(OUTPUT_ROOT, "reports")
@@ -31,6 +59,8 @@ NORMALIZE_ENABLED = NORMALIZATION.get("enabled", False)
 NORMALIZE_GROUPS = NORMALIZATION.get("groups", [])
 NORMALIZE_SUFFIX = NORMALIZATION.get("output_suffix", "_norm")
 NORMALIZE_MODE = NORMALIZATION.get("mode", "min_unique_pets")
+NORMALIZE_EMIT = NORMALIZATION.get("emit", "all")
+NORMALIZE_SEED = int(NORMALIZATION.get("seed", 123))
 COMPARE_ENABLED = COMPARE.get("enabled", False)
 COMPARE_MONTAGE_ENABLED = COMPARE.get("montage_enabled", False)
 COMPARE_GROUPS = COMPARE.get("groups", [PRIMARY_GROUP, SECONDARY_GROUP])
@@ -39,12 +69,93 @@ COMPARE_MODE = COMPARE.get("mode", "min_unique_pets")
 VIS_ENABLED = VIS.get("enabled", False)
 VIS_PLOT_ENABLED = VIS.get("plot_enabled", False)
 ANNOTATION_ENABLED = ANNOTATION.get("enabled", False)
+TRANS_ENABLED = bool(TRANS.get("enabled", False))
+RETAIN_TRANS = bool(TRANS.get("retain_in_pre", TRANS_ENABLED))
+TRANS_CALLER_MODE = str(TRANS.get("caller_mode", "exploratory"))
+TRANS_SPLIT_SEED = int(TRANS.get("split_seed", 123))
+TRANS_VALIDATION_FRACTION = float(
+    TRANS.get("validation_fraction", 0.5))
+TRANS_DIFF_ENABLED = bool(TRANS_DIFF.get("enabled", False))
+TRANS_DIFF_GROUPS = TRANS_DIFF.get(
+    "groups", [PRIMARY_GROUP, SECONDARY_GROUP])
+TRANS_DIFF_REFERENCE = str(TRANS_DIFF.get(
+    "reference", TRANS_DIFF_GROUPS[0] if TRANS_DIFF_GROUPS else ""))
+TRANS_DIFF_CONTRAST = str(TRANS_DIFF.get(
+    "contrast", TRANS_DIFF_GROUPS[1]
+    if len(TRANS_DIFF_GROUPS) > 1 else ""))
+TRANS_DIFF_CANDIDATES = str(TRANS_DIFF.get("candidates", ""))
+TRANS_DIFF_CANDIDATE_SOURCE = str(
+    TRANS_DIFF.get("candidate_source", ""))
+TRANS_DIFF_METHOD = str(TRANS_DIFF.get("method", "auto"))
+TRANS_DIFF_OFFSET = str(TRANS_DIFF.get("offset", "global"))
+TRANS_DIFF_MTC = str(TRANS_DIFF.get("mtc", "BH")).upper()
+TRANS_DIFF_ALPHA = float(TRANS_DIFF.get("alpha", 0.05))
+TRANS_DIFF_PRIOR_DF = float(TRANS_DIFF.get("prior_df", 10.0))
 SAMPLE_PATTERN = "|".join(ALL_SAMPLES)
 GROUP_PATTERN = "|".join(ALL_GROUPS)
 CALLING_GROUP_PATTERN = "|".join(CALLING_GROUPS)
 NORMALIZE_GROUP_PATTERN = "|".join(NORMALIZE_GROUPS) if NORMALIZE_GROUPS else "$^"
 COMPARE_GROUP_PATTERN = "|".join(COMPARE_GROUPS) if COMPARE_GROUPS else "$^"
-PRE_ARGS = f"-c {CHROM_WHITELIST[SPECIES]} {PARAMS.get('pre_extra', '')}".strip()
+TRANS_DIFF_SAMPLE_ROWS = []
+if TRANS_DIFF_ENABLED:
+    seen_trans_samples = set()
+    for condition in TRANS_DIFF_GROUPS:
+        for sample in GROUPS[condition].get("replicates", []):
+            if sample not in SAMPLES:
+                raise ValueError(
+                    f"trans differential sample {sample} is not configured")
+            if sample in seen_trans_samples:
+                raise ValueError(
+                    f"trans differential sample {sample} occurs in both groups")
+            seen_trans_samples.add(sample)
+            TRANS_DIFF_SAMPLE_ROWS.append((sample, condition))
+    if any(sum(row[1] == group for row in TRANS_DIFF_SAMPLE_ROWS) == 0
+           for group in TRANS_DIFF_GROUPS):
+        raise ValueError("each trans differential group needs biological samples")
+PRE_EXTRA = PARAMS.get("pre_extra", "").strip()
+if RETAIN_TRANS and "-trans" not in PRE_EXTRA.split():
+    PRE_EXTRA = (PRE_EXTRA + " -trans").strip()
+if TRANS_ENABLED and not RETAIN_TRANS:
+    raise ValueError("trans.enabled requires trans.retain_in_pre=true")
+if TRANS_CALLER_MODE not in ("exploratory", "split"):
+    raise ValueError("trans.caller_mode must be exploratory or split")
+if TRANS_CALLER_MODE == "split" and (TRANS_SPLIT_SEED < 0 or not
+                                     0.0 < TRANS_VALIDATION_FRACTION < 1.0):
+    raise ValueError("invalid trans split seed/validation fraction")
+if NORMALIZE_EMIT not in ("cis", "trans", "all"):
+    raise ValueError("normalization.emit must be cis, trans, or all")
+if TRANS_ENABLED and NORMALIZE_ENABLED and NORMALIZE_EMIT != "all":
+    raise ValueError(
+        "the shared trans workflow requires normalization.emit=all so "
+        "overall depth and physical Unique PETs remain identical")
+if TRANS_DIFF_ENABLED:
+    if not TRANS_ENABLED or not RETAIN_TRANS:
+        raise ValueError(
+            "trans.differential.enabled requires retained trans PETs")
+    if len(TRANS_DIFF_GROUPS) != 2 or \
+            any(group not in GROUPS for group in TRANS_DIFF_GROUPS):
+        raise ValueError(
+            "trans.differential.groups must name exactly two configured groups")
+    if TRANS_DIFF_REFERENCE == TRANS_DIFF_CONTRAST or \
+            set((TRANS_DIFF_REFERENCE, TRANS_DIFF_CONTRAST)) != \
+            set(TRANS_DIFF_GROUPS):
+        raise ValueError(
+            "trans differential reference/contrast must match its two groups")
+    if not TRANS_DIFF_CANDIDATES or not TRANS_DIFF_CANDIDATE_SOURCE:
+        raise ValueError(
+            "trans differential analysis requires independent fixed candidates "
+            "and a candidate_source declaration")
+    if TRANS_DIFF_METHOD not in ("auto", "exact", "nb", "export"):
+        raise ValueError("unsupported trans differential method")
+    if TRANS_DIFF_OFFSET not in ("global", "pair", "marginal"):
+        raise ValueError("unsupported trans differential offset")
+    if TRANS_DIFF_MTC not in ("BH", "BY"):
+        raise ValueError("unsupported trans differential mtc")
+    if not 0.0 < TRANS_DIFF_ALPHA <= 1.0 or TRANS_DIFF_PRIOR_DF < 0:
+        raise ValueError("invalid trans differential alpha/prior_df")
+if NORMALIZE_SEED < 0:
+    raise ValueError("normalization.seed must be non-negative")
+PRE_ARGS = f"-c {CHROM_WHITELIST[SPECIES]} {PRE_EXTRA}".strip()
 CHROM_PAIR = f"{config.get('view_chrom', config.get('target_chroms', 'chr21'))}-{config.get('view_chrom', config.get('target_chroms', 'chr21'))}"
 
 
@@ -140,6 +251,21 @@ def compare_diff_done():
     return state_file("compare", f"{PRIMARY_GROUP}_vs_{SECONDARY_GROUP}.done")
 
 
+def trans_diff_prefix():
+    return report_prefix(
+        f"{TRANS_DIFF_REFERENCE}_vs_{TRANS_DIFF_CONTRAST}")
+
+
+def trans_diff_sample_sheet():
+    return state_file("trans_diff", "samples.tsv")
+
+
+def trans_diff_done():
+    return state_file(
+        "trans_diff",
+        f"{TRANS_DIFF_REFERENCE}_vs_{TRANS_DIFF_CONTRAST}.done")
+
+
 def vis_done(name):
     return state_file("vis", f"{name}.done")
 
@@ -195,6 +321,11 @@ GROUP_MARKERS = [group_done(group) for group in ALL_GROUPS]
 EST_RES_MARKERS = [est_res_done(group) for group in ALL_GROUPS]
 CALL_PEAK_OUTPUTS = [f"{report_prefix(group)}_peaks.bed" for group in CALLING_GROUPS]
 CALL_LOOP_OUTPUTS = [f"{report_prefix(group)}_loops.txt" for group in CALLING_GROUPS]
+TRANS_CALL_SUFFIX = ("_trans_loops.txt" if TRANS_CALLER_MODE == "split"
+                     else "_trans_candidates.txt")
+CALL_TRANS_OUTPUTS = (
+    [f"{report_prefix(group)}{TRANS_CALL_SUFFIX}"
+     for group in CALLING_GROUPS] if TRANS_ENABLED else [])
 CALL_DOMAIN_OUTPUTS = [f"{report_prefix(group)}_domains.bed" for group in CALLING_GROUPS]
 NORMALIZE_TARGET_FILE = state_file("normalize", "target_unique_pets.txt")
 NORMALIZE_MARKERS = [normalize_done(group) for group in NORMALIZE_GROUPS] if NORMALIZE_ENABLED else []
@@ -228,6 +359,17 @@ ANNOTATION_OUTPUTS = [
 ] + [
     f"{annotation_prefix(group)}_LoopsGtfAno.txt" for group in CALLING_GROUPS
 ] if ANNOTATION_ENABLED else []
+TRANS_DIFF_OUTPUTS = ([
+    trans_diff_done(),
+    f"{trans_diff_prefix()}_trans_counts.tsv",
+    f"{trans_diff_prefix()}_trans_pair_counts.tsv",
+    f"{trans_diff_prefix()}_trans_readsA.tsv",
+    f"{trans_diff_prefix()}_trans_readsB.tsv",
+    f"{trans_diff_prefix()}_trans_exposures.tsv",
+    f"{trans_diff_prefix()}_trans_samples.tsv",
+    f"{trans_diff_prefix()}_trans_dloops.tsv",
+    f"{trans_diff_prefix()}_trans_edgeR.R",
+] if TRANS_DIFF_ENABLED else [])
 
 
 rule all:
@@ -241,11 +383,13 @@ rule all:
         est_sim_done(),
         CALL_PEAK_OUTPUTS,
         CALL_LOOP_OUTPUTS,
+        CALL_TRANS_OUTPUTS,
         CALL_DOMAIN_OUTPUTS,
         COMPARE_FINAL_OUTPUTS,
         VIS_OUTPUTS,
         PLOT_OUTPUTS,
         ANNOTATION_OUTPUTS,
+        TRANS_DIFF_OUTPUTS,
 
 
 rule plot_all:
@@ -335,10 +479,39 @@ rule normalize_target_depth:
         if NORMALIZE_MODE != "min_unique_pets":
             raise ValueError(f"unsupported normalization mode: {NORMALIZE_MODE}")
         counts = []
+        retention_signatures = []
         for path in input:
             with open(path) as fh:
                 meta = json.load(fh)
+            retention = meta.get("Retention")
+            if not isinstance(retention, dict):
+                raise ValueError(
+                    f"{path} lacks Retention metadata; overall normalization "
+                    "cannot compare preprocessing scopes safely")
+            categories = tuple(sorted(
+                retention.get("retained categories", [])))
+            whitelist = tuple(sorted(
+                retention.get("chromosome whitelist", [])))
+            signature = (
+                categories,
+                bool(retention.get("retain trans", False)),
+                whitelist,
+                retention.get("cut"),
+                retention.get("mcut"),
+                retention.get("mapq"),
+                retention.get("format"),
+            )
+            retention_signatures.append(signature)
             counts.append(int(meta["Unique PETs"]))
+        if len(set(retention_signatures)) != 1:
+            raise ValueError(
+                "normalization inputs have incompatible Retention metadata; "
+                "pre -trans, chromosome whitelist and preprocessing cutoffs "
+                "must match")
+        retained_trans = retention_signatures[0][1]
+        if retained_trans != RETAIN_TRANS:
+            raise ValueError(
+                "metadata retain-trans scope disagrees with workflow config")
         Path(output[0]).write_text(str(million_floor_target(counts)))
 
 
@@ -356,6 +529,8 @@ rule normalize_group:
         indir=lambda wc: dataset_dir(wc.group),
         outdir=lambda wc: dataset_dir(normalized_group_name(wc.group)),
         args=lambda wc: PARAMS.get("sample_pets", ""),
+        emit=NORMALIZE_EMIT,
+        seed=NORMALIZE_SEED,
         cmd=CLOOPS2_CMD
     log:
         os.path.join(LOG_DIR, "normalize", "{group}.samplePETs.log")
@@ -369,7 +544,7 @@ rule normalize_group:
         shell(
             r'''
             mkdir -p "{params.outdir}"
-            {params.cmd} samplePETs -d "{params.indir}" -o "{params.outdir}" -tot "{target}" {params.args} > "{log}" 2>&1
+            {params.cmd} samplePETs -d "{params.indir}" -o "{params.outdir}" -tot "{target}" -mode "{params.emit}" -seed "{params.seed}" {params.args} > "{log}" 2>&1
             touch "{output[0]}"
             '''
         )
@@ -497,7 +672,33 @@ rule call_loops:
     shell:
         r"""
         mkdir -p "{REPORT_DIR}" "$(dirname "{log}")"
-        {params.cmd} callLoops -d "{params.data}" -o "{params.prefix}" {params.args} > "{log}" 2>&1
+        {params.cmd} callLoops -d "{params.data}" -o "{params.prefix}" -mode cis {params.args} > "{log}" 2>&1
+        """
+
+
+rule call_trans_candidates:
+    wildcard_constraints:
+        group=CALLING_GROUP_PATTERN
+    input:
+        lambda wc: analysis_meta_file(wc.group)
+    output:
+        os.path.join(REPORT_DIR, "{group}" + TRANS_CALL_SUFFIX),
+    params:
+        data=lambda wc: analysis_dataset_dir(wc.group),
+        prefix=lambda wc: report_prefix(wc.group),
+        args=lambda wc: PARAMS.get("call_trans_loops",
+                                   PARAMS.get("call_loops", "")),
+        inference_args=(
+            f"-trans_split -trans_split_seed {TRANS_SPLIT_SEED} "
+            f"-trans_validation_fraction {TRANS_VALIDATION_FRACTION}"
+            if TRANS_CALLER_MODE == "split" else ""),
+        cmd=CLOOPS2_CMD
+    log:
+        os.path.join(LOG_DIR, "calling", "{group}.callTransLoops.log")
+    shell:
+        r"""
+        mkdir -p "{REPORT_DIR}" "$(dirname "{log}")"
+        {params.cmd} callLoops -d "{params.data}" -o "{params.prefix}" -mode trans {params.inference_args} {params.args} > "{log}" 2>&1
         """
 
 
@@ -565,6 +766,69 @@ rule call_diff_loops:
         mkdir -p "$(dirname "{output[0]}")" "$(dirname "{log}")"
         {params.cmd} callDiffLoops -tloop "{input.tloop}" -td "{params.td}" -cloop "{input.cloop}" -cd "{params.cd}" -o "{params.prefix}" {params.args} > "{log}" 2>&1
         touch "{output[0]}"
+        """
+
+
+rule trans_diff_sample_sheet:
+    input:
+        lambda wc: [meta_file(sample)
+                    for sample, condition in TRANS_DIFF_SAMPLE_ROWS]
+    output:
+        trans_diff_sample_sheet()
+    run:
+        if not TRANS_DIFF_ENABLED:
+            raise ValueError("trans differential workflow is disabled")
+        ensure_parent(output[0])
+        with open(output[0], "w") as handle:
+            handle.write("sample\tcondition\tdirectory\n")
+            for sample, condition in TRANS_DIFF_SAMPLE_ROWS:
+                handle.write(
+                    f"{sample}\t{condition}\t{dataset_dir(sample)}\n")
+
+
+rule call_trans_diff_loops:
+    input:
+        samples=trans_diff_sample_sheet(),
+        candidates=lambda wc: TRANS_DIFF_CANDIDATES
+    output:
+        done=touch(trans_diff_done()),
+        counts=f"{trans_diff_prefix()}_trans_counts.tsv",
+        pair_counts=f"{trans_diff_prefix()}_trans_pair_counts.tsv",
+        reads_a=f"{trans_diff_prefix()}_trans_readsA.tsv",
+        reads_b=f"{trans_diff_prefix()}_trans_readsB.tsv",
+        exposures=f"{trans_diff_prefix()}_trans_exposures.tsv",
+        samples=f"{trans_diff_prefix()}_trans_samples.tsv",
+        results=f"{trans_diff_prefix()}_trans_dloops.tsv",
+        edger=f"{trans_diff_prefix()}_trans_edgeR.R"
+    params:
+        prefix=trans_diff_prefix(),
+        source=shlex.quote(TRANS_DIFF_CANDIDATE_SOURCE),
+        reference=shlex.quote(TRANS_DIFF_REFERENCE),
+        contrast=shlex.quote(TRANS_DIFF_CONTRAST),
+        method=TRANS_DIFF_METHOD,
+        offset=TRANS_DIFF_OFFSET,
+        mtc=TRANS_DIFF_MTC,
+        alpha=TRANS_DIFF_ALPHA,
+        prior_df=TRANS_DIFF_PRIOR_DF,
+        args=PARAMS.get("call_trans_diff", ""),
+        cmd=CLOOPS2_CMD
+    log:
+        os.path.join(
+            LOG_DIR, "trans_diff",
+            f"{TRANS_DIFF_REFERENCE}_vs_{TRANS_DIFF_CONTRAST}.log")
+    shell:
+        r"""
+        mkdir -p "$(dirname "{output.done}")" "$(dirname "{log}")" "{REPORT_DIR}"
+        {params.cmd} callDiffLoops -mode trans \
+            -samples "{input.samples}" \
+            -trans_candidates "{input.candidates}" \
+            -trans_candidate_source {params.source} \
+            -reference {params.reference} -contrast {params.contrast} \
+            -trans_method "{params.method}" -trans_offset "{params.offset}" \
+            -trans_mtc "{params.mtc}" -trans_alpha "{params.alpha}" \
+            -trans_prior_df "{params.prior_df}" -o "{params.prefix}" \
+            {params.args} > "{log}" 2>&1
+        touch "{output.done}"
         """
 
 

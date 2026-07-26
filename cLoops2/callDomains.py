@@ -22,6 +22,10 @@ from cLoops2.ds import XY,Domain
 from cLoops2.io import parseIxy, doms2txt, doms2bed
 from cLoops2.cmat import getObsMat, xy2dict, dict2mat
 from cLoops2.settings import *
+from cLoops2.metadata import (CAP_FORMAL_INFERENCE,
+                              CAP_GLOBAL_NORMALIZATION,
+                              build_library_context,
+                              inspect_actual_counts)
 
 
 def calcSS(f, bs=20000, winSize=500000, cut=0,mcut=-1):
@@ -223,10 +227,16 @@ def callDomains(
     @param bs: list of int, bin size for calling domains
     @param ws: list of int, window size for caculating segregation score
     """
-    meta = json.loads(open(metaf).read())
+    with open(metaf) as handle:
+        meta = json.load(handle)
+    context = build_library_context(
+        meta, actual_counts=inspect_actual_counts(meta))
+    context.require(CAP_FORMAL_INFERENCE)
     doms = {}  #candidate doamins
     bs.sort()
-    tot = meta["Unique PETs"]
+    tot = (context.logical_total
+           if CAP_GLOBAL_NORMALIZATION in context.capabilities else
+           meta["Unique PETs"])
     for binSize in bs:
         for winSize in ws:
             #caculating scores
