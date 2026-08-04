@@ -18,10 +18,21 @@ Examples:
     # all PETs overlapping a plain region
     extract_target_pets.py -f sample_unique.bedpe.gz \
         -r chr7:55019017-55211628 -o region.tsv
+
+    # multiple replicate bedpes at once (source column tracks the origin)
+    extract_target_pets.py -f rep1.bedpe.gz,rep2.bedpe.gz,rep3.bedpe.gz \
+        -g EGFR --gtf gencode.v38.annotation.gtf --pet-type trans \
+        -o EGFR_trans.tsv
+
+    # from a combined 'cLoops2 pre' output directory (.ixy, center coords only)
+    extract_target_pets.py -f combined_pre_dir -g EGFR \
+        --gtf gencode.v38.annotation.gtf --pet-type trans -o EGFR_trans.tsv
 """
 
 import argparse
 import gzip
+import json
+import os
 import re
 import sys
 
@@ -31,7 +42,10 @@ def help():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("-f", "--file", required=True,
-                   help="Input .bedpe or .bedpe.gz file.")
+                   help="Input: a .bedpe/.bedpe.gz file, a comma-separated "
+                        "list of them (e.g. replicates), or a 'cLoops2 pre' "
+                        "output directory containing petMeta.json + .ixy "
+                        "files. A comma-separated mix is also accepted.")
     p.add_argument("-g", "--gene", default=None,
                    help="Gene name (requires --gtf).")
     p.add_argument("-r", "--region", default=None,
@@ -159,42 +173,102 @@ def overlaps(s, e, ws, we):
     return s < we and e > ws
 
 
-def main():
-    op = help()
-    rchrom, ws, we, tss, strand, label = target_window(op)
-    fi = gzip.open(op.file, "rt") if op.file.endswith(".gz") else open(op.file)
-    fo = open(op.output, "w") if op.output else sys.stdout
-    header = [
-        "chrom1", "start1", "end1", "chrom2", "start2", "end2",
-        "name", "score", "strand1", "strand2",
-        "hit_end", "target", "partner_chrom", "partner_start", "partner_end",
-        "partner_dist_to_tss",
-    ]
-    fo.write("\t".join(header) + "\n")
-    kept = total = 0
-    with fi:
-        for line in fi:
+def iter_bedpe(path):
+    """Yield (c1,s1,e1,c2,s2,e2,extras) from a bedpe/bedpe.gz file."""
+    opener = gzip.open if path.endswith(".gz") else open
+    with opener(path, "rt") as f:
+        for line in f:
             if line.startswith("#") or not line.strip():
                 continue
             cols = line.rstrip("\n").split("\t")
             if len(cols) < 6:
                 continue
             try:
-                c1, s1, e1 = cols[0], int(cols[1]), int(cols[2])
-                c2, s2, e2 = cols[3], int(cols[4]), int(cols[5])
+                s1, e1 = int(cols[1]), int(cols[2])
+                s2, e2 = int(cols[4]), int(cols[5])
             except ValueError:
                 continue
+            extras = (cols[6:] + ["", "", "", ""])[:4]
+            yield cols[0], s1, e1, cols[3], s2, e2, extras
+
+
+def iter_ixy_dir(d, pet_type):
+    """Yield (c1,s1,e1,c2,s2,e2,extras) from a 'cLoops2 pre' output dir.
+
+    .ixy only stores per-PET center coordinates (x on chromX, y on chromY),
+    so name/score/strand are empty and each end becomes a 1bp interval.
+    """
+    try:
+        import joblib
+    except ImportError:
+        sys.exit("Reading .ixy files requires joblib (cLoops2 dependency).")
+    metaf = os.path.join(d, "petMeta.json")
+    if not os.path.isfile(metaf):
+        sys.exit("%s: not a 'cLoops2 pre' output dir (petMeta.json missing)" %
+                 d)
+    with open(metaf) as h:
+        meta = json.load(h)
+    data = meta.get("data", {})
+    cats = ("cis", "trans") if pet_type == "all" else (pet_type,)
+    for cat in cats:
+        for key in sorted(data.get(cat, {})):
+            entry = data[cat][key]
+            path = str(entry.get("ixy", ""))
+            if not os.path.isfile(path):
+                path = os.path.join(d, os.path.basename(path))
+            if not os.path.isfile(path):
+                sys.stderr.write("warning: ixy for %s missing, skipped\n" %
+                                 key)
+                continue
+            cx, cy = entry.get("chromX"), entry.get("chromY")
+            if not cx or not cy:
+                parts = key.split("-")
+                if len(parts) != 2:
+                    continue
+                cx, cy = parts
+            try:
+                mat = joblib.load(path, mmap_mode="r")
+            except Exception:
+                mat = joblib.load(path)
+            for x, y in mat:
+                x, y = int(x), int(y)
+                yield cx, x, x + 1, cy, y, y + 1, ["", "", "", ""]
+            del mat
+
+
+def main():
+    op = help()
+    rchrom, ws, we, tss, strand, label = target_window(op)
+    fo = open(op.output, "w") if op.output else sys.stdout
+    header = [
+        "chrom1", "start1", "end1", "chrom2", "start2", "end2",
+        "name", "score", "strand1", "strand2",
+        "hit_end", "target", "partner_chrom", "partner_start", "partner_end",
+        "partner_dist_to_tss", "source",
+    ]
+    fo.write("\t".join(header) + "\n")
+    kept = total = 0
+    for src in op.file.split(","):
+        src = src.strip()
+        if not src:
+            continue
+        name = os.path.basename(src.rstrip("/"))
+        if os.path.isdir(src):
+            # pet-type is already applied by cis/trans record selection
+            rows, need_filter = iter_ixy_dir(src, op.pet_type), False
+        else:
+            rows, need_filter = iter_bedpe(src), True
+        for c1, s1, e1, c2, s2, e2, extras in rows:
             total += 1
-            if op.pet_type == "trans" and c1 == c2:
-                continue
-            if op.pet_type == "cis" and c1 != c2:
-                continue
+            if need_filter:
+                if op.pet_type == "trans" and c1 == c2:
+                    continue
+                if op.pet_type == "cis" and c1 != c2:
+                    continue
             hit1 = (c1 == rchrom and overlaps(s1, e1, ws, we))
             hit2 = (c2 == rchrom and overlaps(s2, e2, ws, we))
             if not (hit1 or hit2):
                 continue
-            # pad short rows so name/score/strand columns line up
-            row = cols + [""] * (10 - len(cols)) if len(cols) < 10 else cols
             if hit1:
                 hit, pc, ps, pe = "end1", c2, s2, e2
             else:
@@ -203,8 +277,9 @@ def main():
             if tss is not None:
                 dist = str(((ps + pe) // 2) - tss)
             kept += 1
-            fo.write("\t".join(map(str, row)) + "\t" +
-                     "\t".join(map(str, [hit, label, pc, ps, pe, dist])) + "\n")
+            row = ([c1, s1, e1, c2, s2, e2] + extras +
+                   [hit, label, pc, ps, pe, dist, name])
+            fo.write("\t".join(map(str, row)) + "\n")
     if op.output:
         fo.close()
     sys.stderr.write("Target %s | scanned %d PETs, kept %d\n" %
