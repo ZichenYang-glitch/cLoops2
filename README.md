@@ -288,8 +288,8 @@ cLoops2 plot -f gm_filtered/chr21-chr21.ixy -o gm_example -start 46228500 -end 4
 ### Routine analysis step 13: call differential enriched loops for two conditions
 ```
 #a. sampling PETs to same/similar depth to call loops with same parameters
-cLoops2 samplePETs -d gm -o gm_samp -tot 780000
-cLoops2 samplePETs -d k562 -o k562_samp -tot 780000
+cLoops2 samplePETs -d gm -o gm_samp -tot 780000 -mode cis -seed 123
+cLoops2 samplePETs -d k562 -o k562_samp -tot 780000 -mode cis -seed 123
 #b. call loops with same parameters
 cLoops2 callLoops -d gm_samp -o gm_samp -eps 200,500,1000 -minPts 10 -w -j
 cLoops2 callLoops -d k562_samp -o k562_samp -eps 200,500,1000 -minPts 10 -w -j
@@ -439,7 +439,7 @@ Examples:
     cLoops2 estDis -d trac -o trac -plot -bs 1000 
     cLoops2 estSim -ds Trac1,Trac2 -o trac_sim -p 10 -bs 2000 -m pcc -plot
     cLoops2 filterPETs -d trac -peaks trac_peaks.bed -o trac_peaksFiltered -p 10
-    cLoops2 samplePETs -d trac -o trac_sampled -t 5000000 -p 10
+    cLoops2 samplePETs -d trac -o trac_sampled -tot 5000000 -mode cis -seed 123 -p 10
     cLoops2 callPeaks -d H3K4me3_ChIC -bgd IgG_ChIC -o H3K4me3_cLoops2 -eps 150 \
                       -minPts 10
     cLoops2 callLoops -d Trac -eps 200,500,1000 -minPts 3 -filter -o Trac -w -j \
@@ -921,33 +921,74 @@ optional arguments:
 ------
 ### 9. Sampling PETs     
 Run **cLoops2 samplePETs -h** to see details.
+
+`-tot` is the target depth of the complete retained library, not a target for
+cis or trans alone. The sampling universe contains every category retained by
+the input metadata; `-mode` only chooses which projection is physically
+written.
+
+| `-mode` | sampled universe | physical output | `Unique PETs` | represented library depth |
+|---|---|---|---:|---:|
+| `cis` | all retained PETs | cis projection | `Kcis` | `-tot` |
+| `trans` | all retained PETs | trans projection | `Ktrans` | `-tot` |
+| `all` | all retained PETs | cis + trans | `-tot` | `-tot` |
+
+When the input was generated without `pre -trans`, no trans PETs exist, so
+`cis` and `all` contain the same rows. For a shared cis+trans workflow use
+`pre -trans` followed by `samplePETs -mode all`.
+
+The direction is selected automatically from `-tot`: a smaller target uses an
+exact global without-replacement sample, an equal target is identity, and a
+larger target uses replacement. Replacement is useful for descriptive
+bootstrap-style output, but it does not create independent PET evidence;
+formal p/q-value callers reject `replacement_ever=true` data.
+
+Automatic upsampling is supported for root and fully materialized `all`
+inputs. A cis/trans projection can be nested-downsampled in the same mode, but
+projection upsampling is intentionally deferred because omitted categories
+cannot be reconstructed; return to the original `pre` or an `-mode all`
+parent when a larger target is needed.
+
+Downsampling uses sequential hypergeometric allocation across stably ordered
+`.ixy` records, followed by without-replacement sampling inside one file at a
+time. Upsampling uses a multinomial allocation followed by per-file sampling
+with replacement. A fixed seed maps every record to a deterministic RNG stream
+independently of CPU scheduling.
+
+```bash
+# Default-pre/cis-only library
+cLoops2 samplePETs -d sample.cLoops2 -o sample.cis.5m \
+  -tot 5000000 -mode cis -seed 123 -p 8
+
+# Overall retained-library normalization; retain both categories
+cLoops2 pre -f sample.bedpe.gz -o sample.all.cLoops2 -trans
+cLoops2 samplePETs -d sample.all.cLoops2 -o sample.all.7m \
+  -tot 7000000 -mode all -seed 123 -p 8
+
+# A trans projection of the same overall sample; physical rows are Ktrans
+cLoops2 samplePETs -d sample.all.cLoops2 -o sample.trans.view \
+  -tot 7000000 -mode trans -seed 123 -p 8
 ```
-Sampling PETs to target total size. 
 
-If there are multiple sample libraries and the total sequencing depths vary a 
-lot, and you want to compare the data fairly, it's better to sample them to 
-similar total PETs (either down-sampling or up-sampling), then call peaks/loops
-with the same parameters. 
+`petMeta.json` records `Sampling.target_logical_total`, physical totals,
+cis/trans allocations, seed/RNG, per-record source/selected/written rows and
+replacement ancestry. `Unique PETs` always remains the number of physical
+output rows. See [the trans/downstream v0.2 design](trans_downstream_adaptation_plan.md)
+for the probability proof, metadata contract and downstream normalization
+rules.
 
-Example:
-    cLoops2 samplePETs -d trac -o trac_sampled -tot 5000000 -p 10
-    
+For maximum compatibility with older downstream modules that still read
+physical `Unique PETs`, use the shared `pre -trans → samplePETs -mode all`
+path, where `Unique PETs == Lglobal == -tot`. Projection directories are
+supported by the new trans caller/quant/matrix path, but legacy peak/domain,
+agg, montage and viewpoint normalizations are not all projection-aware yet.
 
-optional arguments:
-  -h, --help  show this help message and exit
-  -d PREDIR   Assign data directory generated by cLoops2 pre to carry out analysis. 
-  -o FNOUT    Output data directory / file name prefix, default is cLoops2_output.
-  -p CPU      CPUs used to run the job, default is 1, set -1 to use all CPUs
-              available. Too many CPU could cause out-of-memory problem if there are
-              too many PETs.
-  -cut CUT    Distance cutoff to filter cis PETs, only keep PETs with distance
-              >=cut. Default is 0, no filtering.
-  -mcut MCUT  Keep the PETs with distance <=mcut. Default is -1, no filtering.
-  -v          Show cLoops2 version number and exit.
-  ---         Following are sub-commands specific options. This option just show
-              version of cLoops2.
-  -tot TOT    Target total number of PETs.
-```
+`combine` preserves structural retention/replacement provenance and now
+honors `-keep 0`, but it is deliberately not auto-certified for formal
+p/q-value analysis because it lacks a source-row lineage manifest. Use a
+current multi-file `cLoops2 pre -f A.bedpe.gz,B.bedpe.gz -trans` or per-sample
+raw inputs for inferential branches. Legacy combine directories without
+`Retention` remain exploratory until rebuilt or explicitly audited.
 
 ------
 ### 10. Call peaks for 1D or 3D data
@@ -1070,6 +1111,70 @@ In the cLoops2 manuscript, we presented comparisons of cLoops2 callPeaks with ot
 ------
 ### 11. Call loops
 Run **cLoops2 callLoops -h** to see details.
+
+Trans analysis is directional and has two deliberately separate tracks:
+
+- `-mode trans` without `-trans_candidates` runs blockDBSCAN discovery and
+  writes `*_trans_candidates.txt`. This is exploratory: adjusted p-values and
+  `significant` are `NA` because the same PETs selected and scored candidates.
+- `-mode trans -trans_candidates fixed.tsv -trans_candidate_source TEXT`
+  tests an externally fixed, pairing-independent candidate family and writes
+  `*_trans_loops.txt`. It uses strict X/Y global/local hypergeometric tests and
+  analysis-wide BH (or optional BY) correction. Fixed trans-only testing does
+  not require `-eps/-minPts`.
+- `-mode trans -trans_split -trans_split_seed INT` partitions every pair into
+  disjoint discovery and validation PETs. DBSCAN only sees discovery; all
+  counts, p-values and family-wide BH/BY correction use validation. This
+  removes same-data candidate-selection bias at the cost of power.
+- Legacy `-trans` maps to `-mode all` and is deprecated. Upstream data must
+  have been created with `pre -trans`.
+
+```bash
+# Exploratory discovery
+cLoops2 callLoops -d sample.all.7m -o sample -mode trans \
+  -eps 5000 -minPts 10 -p 8
+
+# Formal testing of an independent fixed family
+cLoops2 callLoops -d sample.all.7m -o sample.fixed -mode trans \
+  -trans_candidates preregistered_trans.tsv \
+  -trans_candidate_source "independent cohort" \
+  -trans_local_pad 25000 -trans_test_scope both -trans_mtc BH
+
+# De novo formal split-validation
+cLoops2 callLoops -d sample.all.7m -o sample.split -mode trans \
+  -eps 5000 -minPts 20 -trans_split -trans_split_seed 123 \
+  -trans_validation_fraction 0.5
+
+# Descriptive strict-axis quantification and rectangular matrices
+cLoops2 quant -d sample.all.7m -loops preregistered_trans.tsv \
+  -o sample.quant -mode trans
+cLoops2 dump -d sample.all.7m -o chr1_chr2 -trans_mat \
+  -mat_chrom chr1-chr2 -trans_mat_method pair_oe
+cLoops2 dump -d sample.all.7m -o sample.trans -bedpe -mode trans
+cLoops2 plot -f sample.all.7m/chr1-chr2.ixy -o chr1_chr2 \
+  -trans -trans_method window_oe -start 0 -end 10000000 \
+  -y_start 0 -y_end 10000000
+
+# Directional aggregate, viewpoint, montage, annotation and filtering
+cLoops2 transAgg -d sample.all.7m -loops sample.fixed_trans_loops.txt \
+  -o sample.agg -x_bs 5000 -y_bs 10000 -method pair_oe -plot
+cLoops2 transViewpoint -d sample.all.7m -o sample.vp \
+  -chromX chr1 -chromY chr2 -anchor_axis x \
+  -anchor_start 100000 -anchor_end 105000 \
+  -target_start 0 -target_end 1000000 -bs 5000 -method pair_oe -plot
+cLoops2 transMontage -d sample.all.7m -o sample.montage \
+  -chromX chr1 -chromY chr2 -x_regions chr1.regions.bed \
+  -y_regions chr2.regions.bed -method window_oe -plot
+cLoops2 anaLoops -loops sample.fixed_trans_loops.txt -mode trans \
+  -gtf genes.gtf -net -o sample.trans.annotation
+cLoops2 filterPETs -d sample.all.7m -loops sample.fixed_trans_loops.txt \
+  -mode trans -both -o sample.trans.filtered
+```
+
+Within-pair tests/O/E use `Npair`; cross-sample RPM uses the validated logical
+library depth `Lglobal`; `Unique PETs` is only the current directory's physical
+row count.
+
 ```
 Call loops based on clustering. 
 
@@ -1166,8 +1271,31 @@ optional arguments:
 ```
 
 ------
-### 12. Call differentially enriched intra-chromosomal loops
+### 12. Call differentially enriched loops
 Run **cLoops2 callDiffLoops -h** to see details.
+
+The historical default, `-mode cis`, keeps the pooled two-directory workflow.
+For trans interactions, `-mode trans` counts one fixed candidate family in
+every **raw biological sample** listed in a TSV with `sample`, `condition`, and
+`directory` columns. Downsampled or pooled directories are never treated as
+biological replicates.
+
+```bash
+cLoops2 callDiffLoops -mode trans -samples samples.tsv \
+  -trans_candidates independent_trans_candidates.tsv \
+  -trans_candidate_source "independent discovery cohort" \
+  -reference GM -contrast K562 -trans_method auto \
+  -trans_offset global -trans_mtc BH -o GM_vs_K562
+```
+
+With at least two biological samples per condition, `auto` fits a
+negative-binomial GLM and writes raw counts, `Npair`, `readsA/readsB`, exposure
+matrices, and a directly runnable edgeR QL script. With one sample per
+condition it runs only an exact technical-sampling test, writes
+`biological_inference=false`, and leaves biological `significant` as `NA`.
+Replacement ancestry is rejected. `global`, `pair`, and `marginal` offsets are
+different estimands and are never silently mixed.
+
 ```
 Call differentially enriched intra-chromosomal loops between two conditions.
 
@@ -2039,5 +2167,3 @@ No tested bugs needed warning.
                                   | |                                          | |           
                                   |_|                                          |_| 
 ```
-
-

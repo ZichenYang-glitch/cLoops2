@@ -1,3 +1,9 @@
 snakemake_core/.snakemake/
 snakemake_core/results_snakemake/
 snakemake_core/cLoops2.log
+
+# Build/install artifacts and runtime noise
+build/
+*.egg-info/
+__pycache__/
+*.log

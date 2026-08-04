@@ -23,6 +23,7 @@ import os
 import gzip
 import json
 import random
+import warnings
 from glob import glob
 
 #3rd
@@ -42,12 +43,15 @@ def getUniqueTxt(f):
     Get the unique reads from txt file
     """
     redu = set()
-    for line in open(f):
-        line = line.split("\n")[0].split("\t")
-        line = tuple(line)
-        redu.add( line )
+    with open(f) as handle:
+        for line in handle:
+            line = line.split("\n")[0].split("\t")
+            line = tuple(line)
+            redu.add(line)
     with open(f,"w") as fo:
-        for t in redu:
+        # Stable output makes downstream seeded sampling reproducible across
+        # independent preprocessing runs with identical input.
+        for t in sorted(redu):
             fo.write("\t".join(t)+"\n")
     return len(redu)
 
@@ -58,9 +62,10 @@ def txt2ixy(f):
     .ixy is cLoops2 specific format.
     """
     data = []
-    for line in open(f):
-        line = line.split("\n")[0].split("\t")
-        data.append(list(map(int, line)))
+    with open(f) as handle:
+        for line in handle:
+            line = line.split("\n")[0].split("\t")
+            data.append(list(map(int, line)))
     data = np.array(data)
     joblib.dump(data, f.replace(".txt", ".ixy"))
     os.remove(f)
@@ -130,17 +135,31 @@ def parseBedpe(fs, fout, logger, mapq=1, cs=[], cut=0,mcut=-1, cis=False,cpu=1):
                 }
             nline = [pet.cA, pet.cB]
             chroms[key]["of"].write("\t".join(list(map(str, nline))) + "\n")
+        of.close()
     print("\n" * 2)
     #get unique PETs
-    nfs = [v["f"] for v in chroms.values()]
+    for value in chroms.values():
+        value["of"].close()
+    records = [(key, value["f"]) for key, value in chroms.items()]
+    nfs = [record[1] for record in records]
     del (chroms)
-    uniques = Parallel(n_jobs=cpu,backend="multiprocessing")(delayed(getUniqueTxt)(f) for f in nfs)
-    uniques = int(np.sum( uniques ))
+    unique_counts = Parallel(n_jobs=cpu,backend="multiprocessing")(
+        delayed(getUniqueTxt)(f) for f in nfs)
+    unique_cis = int(
+        np.sum([n for ((chrom_a, chrom_b), _), n in zip(records,
+                                                        unique_counts)
+                if chrom_a == chrom_b]))
+    unique_trans = int(
+        np.sum([n for ((chrom_a, chrom_b), _), n in zip(records,
+                                                        unique_counts)
+                if chrom_a != chrom_b]))
+    uniques = unique_cis + unique_trans
     r = "Totaly %s PETs in target chromosomes from %s, in which %s high quality unqiue PETs" % (
         total, ",".join(fs), uniques)
     logger.info(r)
-    if c > 0:
-        nr = 1-uniques / 1.0 / (c - closeCis)
+    retained_cis = c - closeCis - farCis
+    if retained_cis > 0:
+        nr = 1 - unique_cis / float(retained_cis)
     else:
         nr = 0
     ds = {
@@ -151,6 +170,18 @@ def parseBedpe(fs, fout, logger, mapq=1, cs=[], cut=0,mcut=-1, cis=False,cpu=1):
         "Filtered too close (<%s) PETs" % cut: closeCis,
         "Filtered too distant (>%s) PETs" % mcut: farCis,
         "Unique PETs": uniques,
+        "Unique Cis PETs": unique_cis,
+        "Unique Trans PETs": unique_trans,
+        "Physical Cis PET Rows": unique_cis,
+        "Physical Trans PET Rows": unique_trans,
+        "Retention": {
+            "retain trans": not cis,
+            "retained categories": ["cis", "trans"] if not cis else ["cis"],
+            "chromosome whitelist": sorted(cs),
+            "cut": cut,
+            "mcut": mcut,
+            "mapq": mapq,
+        },
         "Cis PETs Redundancy": nr
     }
     with open(fout + "/petMeta.json", "w") as fo:
@@ -236,17 +267,31 @@ def parsePairs(fs, fout, logger, cs=[], cut=0,mcut=-1, cis=False,cpu=1):
                 }
             nline = [pet.cA, pet.cB]
             chroms[key]["of"].write("\t".join(list(map(str, nline))) + "\n")
+        of.close()
     print("\n" * 2)
     #get unique PETs
-    nfs = [v["f"] for v in chroms.values()]
+    for value in chroms.values():
+        value["of"].close()
+    records = [(key, value["f"]) for key, value in chroms.items()]
+    nfs = [record[1] for record in records]
     del (chroms)
-    uniques = Parallel(n_jobs=cpu,backend="multiprocessing")(delayed(getUniqueTxt)(f) for f in nfs)
-    uniques = int(np.sum( uniques ))
+    unique_counts = Parallel(n_jobs=cpu,backend="multiprocessing")(
+        delayed(getUniqueTxt)(f) for f in nfs)
+    unique_cis = int(
+        np.sum([n for ((chrom_a, chrom_b), _), n in zip(records,
+                                                        unique_counts)
+                if chrom_a == chrom_b]))
+    unique_trans = int(
+        np.sum([n for ((chrom_a, chrom_b), _), n in zip(records,
+                                                        unique_counts)
+                if chrom_a != chrom_b]))
+    uniques = unique_cis + unique_trans
     r = "Totaly %s PETs in target chromosomes from %s, in which %s high quality unqiue PETs" % (
         total, ",".join(fs), uniques)
     logger.info(r)
-    if c > 0:
-        nr = 1-uniques / 1.0 / (c - closeCis)
+    retained_cis = c - closeCis - farCis
+    if retained_cis > 0:
+        nr = 1 - unique_cis / float(retained_cis)
     else:
         nr = 0
     ds = {
@@ -256,6 +301,18 @@ def parsePairs(fs, fout, logger, cs=[], cut=0,mcut=-1, cis=False,cpu=1):
         "Filtered too close (<%s) PETs" % cut: closeCis,
         "Filtered too distant (>%s) PETs" % mcut: farCis,
         "Unique PETs": uniques,
+        "Unique Cis PETs": unique_cis,
+        "Unique Trans PETs": unique_trans,
+        "Physical Cis PET Rows": unique_cis,
+        "Physical Trans PET Rows": unique_trans,
+        "Retention": {
+            "retain trans": not cis,
+            "retained categories": ["cis", "trans"] if not cis else ["cis"],
+            "chromosome whitelist": sorted(cs),
+            "cut": cut,
+            "mcut": mcut,
+            "format": "pairs",
+        },
         "Cis PETs Redundancy": nr
     }
     with open(fout + "/petMeta.json", "w") as fo:
@@ -320,6 +377,8 @@ def combineIxys(key,fixys,outdir,keep=1):
     @param outdir: str, output directory
     @param keep: int, how many to keep for same location
     """
+    if keep < 0:
+        raise ValueError("combine keep must be non-negative")
     mat = {}
     for f in fixys:
         k, nmat = parseIxy(f)
@@ -329,16 +388,12 @@ def combineIxys(key,fixys,outdir,keep=1):
                 mat[nt] = 0
             mat[nt] += 1
     nmat = []
-    vs = 0
-    for k,v in mat.items():
-        vs += v
-        if keep >0:
-            for i in range(min(v,keep)):
-                nmat.append(k)
-        else:
+    for k, v in sorted(mat.items()):
+        copies = v if keep == 0 else min(v, keep)
+        for i in range(copies):
             nmat.append(k)
     del mat
-    nmat = np.array(nmat)
+    nmat = np.asarray(nmat, dtype=np.int64).reshape((-1, 2))
     fout = os.path.join(outdir,key+".ixy")
     joblib.dump(nmat, fout)
 
@@ -352,13 +407,41 @@ def combineDirs(dirs,fout,logger,keep=1,cpu=1):
     @param keep: how many to keep for the same location, 0 means all
     @pram cpu: cpu numbers to run the job
     """
-    #output directory
-    os.mkdir(fout)
-    #prepare files
+    # Validate parents before creating output.  A combine is a materialized
+    # transform, not a fresh ``pre`` root, so its replacement ancestry must be
+    # propagated explicitly instead of being lost by writeNewJson().
+    from cLoops2.metadata import build_library_context
+
     ds = {"cis":{},"trans":{}}
+    parent_summaries = []
+    parent_retentions = []
     for dir in dirs:
         metaf = dir + "/petMeta.json"
-        meta = json.loads(open(metaf).read())
+        with open(metaf) as handle:
+            meta = json.load(handle)
+        actual_counts = {}
+        for category in ("cis", "trans"):
+            entries = meta.get("data", {}).get(category, {})
+            for key, entry in entries.items():
+                record_id = entry.get(
+                    "record_id", "%s:%s" % (category, key))
+                try:
+                    matrix = joblib.load(entry["ixy"], mmap_mode="r")
+                except Exception:
+                    matrix = joblib.load(entry["ixy"])
+                actual_counts[str(record_id)] = int(matrix.shape[0])
+                del matrix
+        context = build_library_context(meta, actual_counts=actual_counts)
+        parent_summaries.append({
+            "directory": os.path.abspath(dir),
+            "physical_total": context.physical_total,
+            "logical_total": context.logical_total,
+            "validity": context.validity,
+            "source_kind": context.source_kind,
+            "emit": context.emit,
+            "replacement_ever": context.replacement_ever,
+        })
+        parent_retentions.append(meta.get("Retention"))
         for k, v in meta["data"]["cis"].items():
             if k not in ds["cis"]:
                 ds["cis"][k] = []
@@ -366,7 +449,8 @@ def combineDirs(dirs,fout,logger,keep=1,cpu=1):
         for k, f in meta["data"]["trans"].items():
             if k not in ds["trans"]:
                 ds["trans"][k] = []
-            ds["trans"][k].append(v["ixy"])
+            ds["trans"][k].append(f["ixy"])
+    os.mkdir(fout)
     #combine files
     logger.info("Combining intra-chromosomal PETs.")
     Parallel(n_jobs=cpu, backend="multiprocessing")(delayed(combineIxys)(
@@ -383,7 +467,52 @@ def combineDirs(dirs,fout,logger,keep=1,cpu=1):
         keep,
     ) for k,v in tqdm(ds["trans"].items()))
     #update meta information
-    writeNewJson( fout )
+    writeNewJson(fout)
+    metaf = os.path.join(fout, "petMeta.json")
+    with open(metaf) as handle:
+        output_meta = json.load(handle)
+    known_replacements = [
+        parent["replacement_ever"] for parent in parent_summaries
+    ]
+    if any(value is True for value in known_replacements):
+        replacement_ever = True
+    elif all(value is False for value in known_replacements):
+        replacement_ever = False
+    else:
+        replacement_ever = None
+    parents_structurally_valid = all(
+        parent["validity"] in ("valid", "legacy_root_assumed")
+        for parent in parent_summaries)
+    parents_fully_materialized = all(
+        parent["source_kind"] in ("root", "all_sample") and
+        parent["physical_total"] == parent["logical_total"]
+        for parent in parent_summaries)
+    retention_compatible = (
+        bool(parent_retentions) and parent_retentions[0] is not None and
+        all(retention == parent_retentions[0]
+            for retention in parent_retentions[1:]))
+    transform_valid = (parents_structurally_valid and
+                       parents_fully_materialized and
+                       retention_compatible)
+    output_meta["Transformation"] = {
+        "schema_version": 1,
+        "operation": "combine",
+        "keep": int(keep),
+        "validity": "valid" if transform_valid else "unknown_ancestry",
+        "integrity_level": "structural",
+        "logical_total": int(output_meta["Unique PETs"]),
+        "physical_output_total": int(output_meta["Unique PETs"]),
+        "replacement_ever": replacement_ever,
+        "retention_compatible": bool(retention_compatible),
+        "parents_fully_materialized": bool(parents_fully_materialized),
+        "formal_inference_eligible": False,
+        "parents": parent_summaries,
+    }
+    if retention_compatible:
+        output_meta["Retention"] = parent_retentions[0]
+    with open(metaf, "w") as handle:
+        json.dump(output_meta, handle, indent=2, sort_keys=True)
+        handle.write("\n")
 
 
 ## meta file related functions
@@ -391,32 +520,175 @@ def updateJson(ixyfs, metaf):
     """
     Update the meta information as add the files. 
     """
-    meta = json.loads(open(metaf).read())
+    with open(metaf) as handle:
+        meta = json.load(handle)
     meta["data"] = {"cis": {}, "trans": {}}
     #add .ixy files information
-    for f in ixyfs:
+    for f in sorted(ixyfs):
         key = os.path.split(f)[1].replace(".ixy", "")
         key2 = tuple(key.split("-"))
+        if len(key2) != 2 or not key2[0] or not key2[1]:
+            raise ValueError(
+                "ambiguous chromosome-pair filename %r; v0.2 metadata "
+                "requires an unambiguous legacy chromX-chromY basename" %
+                os.path.basename(f))
+        entry = {
+            "ixy": os.path.abspath(f),
+            "chromX": key2[0],
+            "chromY": key2[1],
+            "record_id": "%s:%s" %
+            ("cis" if key2[0] == key2[1] else "trans", key),
+        }
         if key2[0] == key2[1]:
-            meta["data"]["cis"][key] = {"ixy": os.path.abspath(f)}
+            meta["data"]["cis"][key] = entry
         else:
-            meta["data"]["trans"][key] = {"ixy": os.path.abspath(f)}
+            meta["data"]["trans"][key] = entry
     with open(metaf, "w") as fo:
         json.dump(meta, fo)
 
 
 def writeNewJson(fdir):
     """
-    Write new json file of meta information.
+    Rebuild physical metadata while preserving auditable provenance.
+
+    Historical versions replaced ``petMeta.json`` with only ``Unique PETs``
+    and ``data``, silently deleting Sampling metadata on ``cLoops2 update``.
+    v0.2 preserves existing top-level fields.  Structural Sampling validation
+    is still performed by :mod:`cLoops2.metadata`; if physical counts changed,
+    the old manifest and rebuilt totals deliberately disagree and the
+    validator marks the context invalid rather than inventing a new logical
+    library depth.
     """
-    ixyfs = glob(fdir + "/*.ixy")
+    ixyfs = sorted(glob(fdir + "/*.ixy"))
     tot = 0
+    category_totals = {"cis": 0, "trans": 0}
+    observed_records = {}
     for f in ixyfs:
-        key, mat = parseIxy(f)
-        tot += mat.shape[0]
+        key = os.path.basename(f).replace(".ixy", "")
+        axes = key.split("-")
+        if len(axes) != 2 or not axes[0] or not axes[1]:
+            raise ValueError(
+                "ambiguous chromosome-pair filename %r" % os.path.basename(f))
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                mat = joblib.load(f, mmap_mode="r")
+        except Exception:
+            mat = joblib.load(f)
+        if not isinstance(mat, np.ndarray) or mat.ndim != 2 or mat.shape[1] != 2:
+            raise ValueError("ixy file %s must have shape (n, 2)" % f)
+        rows = int(mat.shape[0])
+        tot += rows
+        category = "cis" if axes[0] == axes[1] else "trans"
+        category_totals[category] += rows
+        observed_records["%s:%s" % (category, key)] = {
+            "rows": rows,
+            "dtype": str(mat.dtype),
+        }
+        del mat
     nmetaf = fdir + "/petMeta.json"
+    meta = {}
+    existing = None
+    if os.path.isfile(nmetaf):
+        with open(nmetaf) as handle:
+            existing = json.load(handle)
+        if isinstance(existing, dict):
+            meta.update(existing)
+    old_totals = None
+    if isinstance(existing, dict):
+        old_totals = (
+            existing.get("Unique PETs"),
+            existing.get("Unique Cis PETs",
+                         existing.get("Physical Cis PET Rows")),
+            existing.get("Unique Trans PETs",
+                         existing.get("Physical Trans PET Rows")),
+        )
+    meta["Unique PETs"] = tot
+    meta["Unique Cis PETs"] = category_totals["cis"]
+    meta["Unique Trans PETs"] = category_totals["trans"]
+    meta["Physical Cis PET Rows"] = category_totals["cis"]
+    meta["Physical Trans PET Rows"] = category_totals["trans"]
+    sampling = meta.get("Sampling")
+    if isinstance(sampling, dict):
+        # Relocating a directory changes absolute output paths but not the
+        # sampling operation.  Refresh paths by stable legacy key; all count
+        # fields remain untouched for independent structural validation.
+        paths_by_key = {
+            os.path.basename(path).replace(".ixy", ""): os.path.abspath(path)
+            for path in ixyfs
+        }
+        for record in sampling.get("records", []):
+            if not isinstance(record, dict):
+                continue
+            key = record.get("key")
+            if key in paths_by_key and int(record.get("written_rows", 0)) > 0:
+                record["output_path"] = paths_by_key[key]
+        expected_records = {}
+        for record in sampling.get("records", []):
+            if not isinstance(record, dict):
+                continue
+            record_id = record.get("record_id")
+            if record_id:
+                expected_records[str(record_id)] = record
+        invalidation = []
+        for record_id, observed in observed_records.items():
+            expected = expected_records.get(record_id)
+            if expected is None:
+                invalidation.append(
+                    "physical record %s is absent from Sampling manifest" %
+                    record_id)
+                continue
+            if int(expected.get("written_rows", -1)) != observed["rows"]:
+                invalidation.append(
+                    "%s has %s rows, manifest expects %s" %
+                    (record_id, observed["rows"],
+                     expected.get("written_rows")))
+            expected_dtype = expected.get("dtype")
+            if (expected_dtype is not None and
+                    str(expected_dtype) != observed["dtype"]):
+                invalidation.append(
+                    "%s dtype is %s, manifest expects %s" %
+                    (record_id, observed["dtype"], expected_dtype))
+        for record_id, expected in expected_records.items():
+            if (int(expected.get("written_rows", 0)) > 0 and
+                    record_id not in observed_records):
+                invalidation.append(
+                    "manifest record %s is missing its physical ixy" %
+                    record_id)
+        if invalidation:
+            sampling["validity"] = "invalid"
+            sampling["invalidation_reasons"] = invalidation
+    elif ("Transformation" not in meta and old_totals is not None and
+          old_totals[0] is not None and
+          (int(old_totals[0]) != tot or
+           (old_totals[1] is not None and
+            int(old_totals[1]) != category_totals["cis"]) or
+           (old_totals[2] is not None and
+            int(old_totals[2]) != category_totals["trans"]))):
+        # An update may repair paths, but a changed physical root is no longer
+        # demonstrably the original no-replacement pre output.  Record the
+        # uncertainty explicitly so rebuilding metadata cannot launder copied
+        # rows into formal-inference eligibility.
+        meta["Transformation"] = {
+            "schema_version": 1,
+            "operation": "external_update",
+            "validity": "unknown_ancestry",
+            "integrity_level": "structural",
+            "logical_total": tot,
+            "physical_output_total": tot,
+            "replacement_ever": None,
+            "parents_fully_materialized": False,
+            "formal_inference_eligible": False,
+            "previous_physical_totals": {
+                "all": int(old_totals[0]),
+                "cis": (None if old_totals[1] is None else
+                        int(old_totals[1])),
+                "trans": (None if old_totals[2] is None else
+                          int(old_totals[2])),
+            },
+        }
     with open(nmetaf, "w") as fo:
-        json.dump({"Unique PETs": tot}, fo)
+        json.dump(meta, fo)
     updateJson(ixyfs, nmetaf)
 
 
@@ -492,23 +764,24 @@ def parseBed2Peaks(fbed):
     """
     """
     peaks = {}
-    for line in open(fbed):
-        line = line.split("\n")[0].split("\t")
-        if len(line) < 3:
-            continue
-        key = line[0] + "-" + line[0]
-        if key not in peaks:
-            peaks[key] = []
-        peak = Peak()
-        if len(line) >=4:
-            peak.id = "|".join(line[:4])
-        else:
-            peak.id = "|".join(line[:3])
-        peak.chrom = line[0]
-        peak.start = int(line[1])
-        peak.end = int(line[2])
-        peak.length = peak.end - peak.start
-        peaks[key].append(peak)
+    with open(fbed) as handle:
+        for line in handle:
+            line = line.split("\n")[0].split("\t")
+            if len(line) < 3:
+                continue
+            key = line[0] + "-" + line[0]
+            if key not in peaks:
+                peaks[key] = []
+            peak = Peak()
+            if len(line) >=4:
+                peak.id = "|".join(line[:4])
+            else:
+                peak.id = "|".join(line[:3])
+            peak.chrom = line[0]
+            peak.start = int(line[1])
+            peak.end = int(line[2])
+            peak.length = peak.end - peak.start
+            peaks[key].append(peak)
     return peaks
 
 
@@ -707,36 +980,77 @@ def loops2NewWashuTxt(loops, fout, significant=1):
           fout)
 
 
-def parseTxt2Loops(f, cut=0):
+def parseTxt2Loops(f, cut=0, mcut=-1, mode="cis"):
+    """Parse a loop text file into :class:`cLoops2.ds.Loop` objects.
+
+    ``cut`` and ``mcut`` are genomic-distance filters and therefore only
+    apply to intra-chromosomal loops.  Inter-chromosomal loops have no
+    genomic distance; cLoops2 writes ``-1`` for that field.  The previous
+    implementation applied ``cut`` before classifying the loop and silently
+    discarded every standard trans loop when ``cut`` was left at its default
+    value of zero.
+
+    Parameters
+    ----------
+    f : str
+        Loop text file.
+    cut, mcut : int
+        Minimum and maximum distance for cis loops.  A non-positive ``mcut``
+        disables the upper bound.
+    mode : {"cis", "trans", "all"}
+        Select which loop categories to return.  The default remains cis so
+        existing cis-oriented consumers do not start receiving trans records
+        merely because their input file contains them.
+
+    Notes
+    -----
+    Dictionary keys retain the historical ``chromX-chromY`` representation
+    for API compatibility.  New metadata must store ``chromX`` and ``chromY``
+    as separate fields; this parser must not be used to reverse an ambiguous
+    key back into chromosome names.
     """
-    Parse _loop.txt file into cLoops2:ds:Loop objects.
-    """
+    if mode not in ("cis", "trans", "all"):
+        raise ValueError("mode must be one of: cis, trans, all")
     loops = {}
-    for i, line in enumerate(open(f)):
-        if i == 0:
-            continue
-        line = line.split("\n")[0].split("\t")
-        if len(line) < 8:
-            continue
-        loop = Loop()
-        loop.id = line[0]
-        loop.chromX = line[1]
-        loop.x_start = int(float(line[2]))
-        loop.x_end = int(float(line[3]))
-        loop.chromY = line[4]
-        loop.y_start = int(float(line[5]))
-        loop.y_end = int(float(line[6]))
-        loop.distance = int(float(line[7]))
-        if loop.distance < cut:
-            continue
-        key = loop.chromX + "-" + loop.chromY
-        loop.x_center = (loop.x_start + loop.x_end) / 2
-        loop.y_center = (loop.y_start + loop.y_end) / 2
-        if loop.chromX == loop.chromY:
-            loop.cis = True
-        else:
-            loop.cis = False
-        loops.setdefault(key, []).append(loop)
+    with open(f) as handle:
+        for i, line in enumerate(handle):
+            line = line.split("\n")[0].split("\t")
+            if not line or not line[0]:
+                continue
+            if line[0].startswith("#") or line[0] == "loopId":
+                continue
+            if len(line) < 8:
+                continue
+            loop = Loop()
+            loop.id = line[0]
+            loop.chromX = line[1]
+            loop.x_start = int(float(line[2]))
+            loop.x_end = int(float(line[3]))
+            loop.chromY = line[4]
+            loop.y_start = int(float(line[5]))
+            loop.y_end = int(float(line[6]))
+            loop.cis = loop.chromX == loop.chromY
+            if mode == "cis" and not loop.cis:
+                continue
+            if mode == "trans" and loop.cis:
+                continue
+            distance = line[7].strip().lower()
+            if distance in ("na", "nan", "."):
+                if loop.cis:
+                    raise ValueError("cis loop %s has no genomic distance" %
+                                     loop.id)
+                loop.distance = -1
+            else:
+                loop.distance = int(float(line[7]))
+            if loop.cis:
+                if loop.distance < cut:
+                    continue
+                if mcut > 0 and loop.distance > mcut:
+                    continue
+            key = loop.chromX + "-" + loop.chromY
+            loop.x_center = (loop.x_start + loop.x_end) / 2
+            loop.y_center = (loop.y_start + loop.y_end) / 2
+            loops.setdefault(key, []).append(loop)
     return loops
 
 
@@ -986,5 +1300,3 @@ def parseTxt2Domains(f):
         key = domain.chrom + "-" + domain.chrom
         domains.setdefault(key, []).append(domain)
     return domains
-
-

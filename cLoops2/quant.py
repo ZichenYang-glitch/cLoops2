@@ -18,6 +18,7 @@ import os
 import json
 from glob import glob
 from copy import deepcopy
+from dataclasses import replace
 from datetime import datetime
 
 #3rd library
@@ -34,6 +35,14 @@ from cLoops2.settings import *
 from cLoops2.callPeaks import getPeakNearbyPETs
 from cLoops2.callDomains import calcSS,writeSS2Bdg
 from cLoops2.callCisLoops import getPerRegions, estAnchorSig
+from cLoops2.metadata import (CAP_FORMAL_INFERENCE,
+                              CAP_GLOBAL_NORMALIZATION,
+                              build_library_context,
+                              inspect_actual_counts)
+from cLoops2.callTransLoops import (_index_for_record, _trans_resources,
+                                    parseFixedTransCandidates)
+from cLoops2.trans_stats import (describe_de_novo_candidates,
+                                 write_trans_loop_results)
 
 ### peaks quantification releated funcitons
 def _quantPeaks(key,peaks,fixy,tot,cut=0, mcut=-1,pext=0,exts=[5,10]):
@@ -104,10 +113,15 @@ def quantPeaks(
     peaks = parseBed2Peaks(peakf)
     #meta data
     metaf = predir + "/petMeta.json"
-    meta = json.loads(open(metaf).read())
+    with open(metaf) as handle:
+        meta = json.load(handle)
+    context = build_library_context(
+        meta, actual_counts=inspect_actual_counts(meta))
+    context.require(CAP_FORMAL_INFERENCE)
+    context.require(CAP_GLOBAL_NORMALIZATION)
     keys = list(meta["data"]["cis"].keys())
     keys = list(set(keys).intersection(set(peaks.keys())))
-    tot = meta["Unique PETs"]
+    tot = context.logical_total
     #get the data
     ds = Parallel(n_jobs=cpu,backend="multiprocessing")(delayed(_quantPeaks)(
         key,
@@ -279,6 +293,60 @@ def _loops2txt(loops, fout):
             fo.write("\t".join(list(map(str, line))) + "\n")
 
 
+def _quantTransLoops(predir,
+                     loopf,
+                     output,
+                     logger,
+                     local_pad=5000,
+                     test_scope="both"):
+    """Directionally quantify trans rectangles without claiming inference.
+
+    Formal fixed-candidate testing is exposed by ``callLoops
+    -trans_candidates``.  Generic quantification may receive candidates that
+    were selected from the same data, so this path always writes descriptive
+    counts/effects with adjusted p-values and significance set to ``NA``.
+    """
+    _, context, trans_records = _trans_resources(predir)
+    candidates = parseFixedTransCandidates(
+        loopf,
+        trans_records,
+        "quantification:%s" % os.path.abspath(loopf),
+        skip_cis=True,
+    )
+    by_record = {}
+    seen = set()
+    for candidate in candidates:
+        if candidate.loop_id in seen:
+            raise ValueError("duplicate trans loop id %r" % candidate.loop_id)
+        seen.add(candidate.loop_id)
+        by_record.setdefault(candidate.record_id, []).append(candidate)
+    records_by_id = {
+        record["record_id"]: record for record in trans_records.values()
+    }
+    results = []
+    for record_id in sorted(by_record):
+        index = _index_for_record(records_by_id[record_id])
+        described = describe_de_novo_candidates(
+            by_record[record_id],
+            {record_id: index},
+            context,
+            local_pad=local_pad,
+            test_scope=test_scope,
+        )
+        results.extend([
+            replace(result, inference_mode="descriptive_quant")
+            for result in described
+        ])
+    results.sort(key=lambda result: (
+        result.chrom_x, result.chrom_y, result.x_start, result.y_start,
+        result.loop_id))
+    path = output + "_trans_quantified_loops.txt"
+    write_trans_loop_results(path, results)
+    logger.info("Wrote %s descriptive trans loop measurements to %s." %
+                (len(results), path))
+    return results
+
+
 def quantLoops(
         predir,
         loopf,
@@ -288,14 +356,57 @@ def quantLoops(
         mcut=-1,
         cpu=1,
         offp=False,
+        mode="cis",
+        transLocalPad=5000,
+        transTestScope="both",
 ):
     """
-    Quantification of loops.
+    Quantification of cis loops, trans rectangles, or both.
+
+    ``mode`` defaults to cis for backward compatibility.  Trans output is a
+    versioned descriptive schema and never silently reuses the cis XY-union
+    queries or legacy p-value columns.
     """
-    loops = parseTxt2Loops(loopf, cut=0)
-    metaf = predir + "/petMeta.json"
-    meta = json.loads(open(metaf).read())
-    tot = meta["Unique PETs"]
+    if mode not in ("cis", "trans", "all"):
+        raise ValueError("mode must be cis, trans, or all")
+    meta = None
+    context = None
+    if mode in ("cis", "all"):
+        metaf = predir + "/petMeta.json"
+        with open(metaf) as handle:
+            meta = json.load(handle)
+        context = build_library_context(
+            meta, actual_counts=inspect_actual_counts(meta))
+        if context.validity == "invalid":
+            raise ValueError("invalid PET metadata: %s" %
+                             ("; ".join(context.reasons) or
+                              "unknown reason"))
+        if not offp:
+            if CAP_FORMAL_INFERENCE not in context.capabilities:
+                raise ValueError(
+                    "cis loop p-values require validated "
+                    "replacement_ever=false provenance; rerun with -offp "
+                    "for descriptive counts")
+    trans_results = None
+    if mode in ("trans", "all"):
+        trans_results = _quantTransLoops(
+            predir,
+            loopf,
+            output,
+            logger,
+            local_pad=transLocalPad,
+            test_scope=transTestScope,
+        )
+    if mode == "trans":
+        return trans_results
+
+    loops = parseTxt2Loops(loopf, cut=0, mode="cis")
+    if CAP_GLOBAL_NORMALIZATION in context.capabilities:
+        tot = context.logical_total
+    else:
+        # Preserve legacy cis behavior when provenance is genuinely unknown;
+        # new projection metadata must never take this fallback.
+        tot = meta["Unique PETs"]
     keys = list(meta["data"]["cis"].keys())
     keys = list(set(keys).intersection(set(loops.keys())))
     ds = Parallel(n_jobs=cpu,backend="multiprocessing")(delayed(_quantLoops)(
@@ -311,6 +422,7 @@ def quantLoops(
     for d in ds:
         loops.extend(d[1])
     _loops2txt(loops, output + "_loops.txt")
+    return trans_results
 
 
 ### domains quantification releated functions
@@ -371,10 +483,14 @@ def quantDomains(
     domains = parseTxt2Domains(domainf)
     #pre data
     metaf = predir + "/petMeta.json"
-    meta = json.loads(open(metaf).read())
+    with open(metaf) as handle:
+        meta = json.load(handle)
+    context = build_library_context(
+        meta, actual_counts=inspect_actual_counts(meta))
+    context.require(CAP_GLOBAL_NORMALIZATION)
     keys = list(meta["data"]["cis"].keys())
     keys = list(set(keys).intersection(set(domains.keys())))
-    tot = meta["Unique PETs"]
+    tot = context.logical_total
 
     #get
     ds = Parallel(n_jobs=cpu,backend="multiprocessing")(delayed(_quantDomains)(
@@ -391,5 +507,3 @@ def quantDomains(
         for d in ds:
             rs.extend(d[-1])
         writeSS2Bdg(rs, output + "_SS.bdg")
-
-

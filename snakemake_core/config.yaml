@@ -19,7 +19,9 @@ groups:
     build_mode: "pre"
   k562:
     replicates: ["k562_bio1", "k562_bio2"]
-    build_mode: "combine"
+    # Use pre for inferential branches. combine outputs retain global depth
+    # for exploration but are intentionally not auto-certified as formal.
+    build_mode: "pre"
 
 primary_group: "gm"
 secondary_group: "k562"
@@ -32,6 +34,30 @@ normalization:
   groups: ["gm", "k562"]
   output_suffix: "_norm"
   mode: "min_unique_pets"
+  # Overall retained-library normalization. Keep "all" when trans is enabled.
+  emit: "all"
+  seed: 123
+
+trans:
+  # Setting enabled=true automatically adds pre -trans, preserves trans during
+  # normalization, and tracks exploratory _trans_candidates.txt outputs.
+  enabled: false
+  retain_in_pre: false
+  caller_mode: "split"
+  split_seed: 123
+  validation_fraction: 0.5
+  differential:
+    enabled: false
+    groups: ["gm", "k562"]
+    reference: "gm"
+    contrast: "k562"
+    candidates: "../references/independent_trans_candidates.tsv"
+    candidate_source: "independent cohort or pre-registered rectangles"
+    method: "auto"
+    offset: "global"
+    mtc: "BH"
+    alpha: 0.05
+    prior_df: 10
 
 compare:
   enabled: true
@@ -87,6 +113,8 @@ params:
   est_sim: "-bs 1000 -plot -p 6"
   call_peaks: "-eps 50,100 -minPts 10 -mcut 1000 -split"
   call_loops: "-eps 200,500,1000 -minPts 10 -w -j"
+  call_trans_loops: "-eps 200,500,1000 -minPts 10 -w -j"
+  call_trans_diff: ""
   call_domains: "-bs 5000 -ws 100000,250000"
   compare_sample_pets: "-p 4"
   compare_call_loops: "-eps 200,500,1000 -minPts 10 -w -j"

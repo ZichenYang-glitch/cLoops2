@@ -44,6 +44,9 @@ from cLoops2.io import parseIxy, ixy2pet, peaks2txt, peaks2bed
 from cLoops2.blockDBSCAN import blockDBSCAN as DBSCAN
 #from cLoops2.cmat import get1DSig
 from cLoops2.cmat import get1DSigPE as get1DSig
+from cLoops2.metadata import (CAP_FORMAL_INFERENCE,
+                              build_library_context,
+                              inspect_actual_counts)
 
 #gloabl settings
 logger = None
@@ -524,7 +527,17 @@ def callPeaks(
     """
     global logger
     logger = log
-    meta = json.loads(open(metaf).read())
+    with open(metaf) as handle:
+        meta = json.load(handle)
+    build_library_context(
+        meta, actual_counts=inspect_actual_counts(meta)).require(
+            CAP_FORMAL_INFERENCE)
+    if metabgf is not None:
+        with open(metabgf) as handle:
+            bgmeta = json.load(handle)
+        build_library_context(
+            bgmeta, actual_counts=inspect_actual_counts(bgmeta)).require(
+                CAP_FORMAL_INFERENCE)
     #get the total PETs
     totalPets = 0
     for key in meta["data"]["cis"].keys():

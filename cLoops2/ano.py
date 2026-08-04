@@ -16,6 +16,7 @@ Include cLoops2 loops-centric analysis module. Input should be the _loops.txt fi
 
 #sys
 import os
+from collections import defaultdict
 
 #3rd
 import numpy as np
@@ -68,14 +69,20 @@ def readGenes(gtf, tid=False):
     gs = {}
     #get all genes information
     print("reading annotaions from %s" % gtf)
-    for line in tqdm(open(gtf).read().split("\n")[:-1]):
+    with open(gtf) as handle:
+        lines = handle.read().splitlines()
+    for line in tqdm(lines):
         if line.startswith("#"):
             continue
         line = line.split("\n")[0].split("\t")
         if line[2] != "exon":
             continue
         e = parseGtfLine(line, tid)
-        if e.name not in gs:
+        # Gene/transcript names are not guaranteed to be globally unique.
+        # Include chromosome and stable id so a same-named feature on chromY
+        # cannot be merged into the chromX record during trans annotation.
+        gene_key = (e.chrom, e.id, e.name)
+        if gene_key not in gs:
             g = Gene()
             g.chrom = e.chrom
             g.start = e.start
@@ -84,13 +91,13 @@ def readGenes(gtf, tid=False):
             g.name = e.name
             g.id = e.id
             g.exons = {(e.start, e.end): e}
-            gs[g.name] = g
+            gs[gene_key] = g
         else:
             #same position exons
-            if (e.start, e.end) in gs[e.name].exons:
+            if (e.start, e.end) in gs[gene_key].exons:
                 continue
             else:
-                g = gs[e.name]
+                g = gs[gene_key]
                 if e.start < g.start:
                     g.start = e.start
                 if e.end > g.end:
@@ -217,6 +224,102 @@ def annotateLoopToGenes(loops, genes, fout, pdis=2000, cpu=1):
     fo = fout + "_LoopsGtfAno.txt"
     rs.to_csv(fo, sep="\t", index_label="loopId")
     return fo
+
+
+def _iter_loops(loops):
+    """Yield loops in a stable order from a legacy loop mapping or sequence."""
+    if isinstance(loops, dict):
+        values = []
+        for key in sorted(loops):
+            values.extend(loops[key])
+    else:
+        values = list(loops)
+    return sorted(values, key=lambda loop: (
+        loop.chromX, int(loop.x_start), int(loop.x_end), loop.chromY,
+        int(loop.y_start), int(loop.y_end), str(loop.id)))
+
+
+def _annotate_anchor_axis(genes, chrom, start, end, pdis):
+    """Annotate one anchor against TSSs from its own chromosome only."""
+    chrom_genes = genes.get(chrom, {})
+    if not chrom_genes:
+        return {
+            "type": "Unannotated",
+            "distance": None,
+            "genes": [],
+            "gene_locations": "",
+        }
+
+    positions = np.asarray(sorted(chrom_genes), dtype=np.int64)
+    left = int(np.searchsorted(positions, int(start), side="left"))
+    right = int(np.searchsorted(positions, int(end), side="right"))
+    if left < right:
+        selected_positions = positions[left:right]
+        distance = 0
+    else:
+        center = (int(start) + int(end)) / 2.0
+        distances = np.abs(positions.astype(float) - center)
+        minimum = float(np.min(distances))
+        # Stable tie handling is useful for equidistant TSSs and independent of
+        # scipy/KDTree implementation details.
+        selected_positions = positions[np.flatnonzero(distances == minimum)]
+        distance = int(minimum)
+
+    selected = [chrom_genes[int(position)]
+                for position in selected_positions]
+    anchor_type = "Promoter" if distance <= int(pdis) else "Enhancer"
+    locations = ",".join([
+        gene.chrom + ":" + str(gene.start) + "-" + str(gene.end) + "|" +
+        gene.strand + "|" + gene.name for gene in selected
+    ])
+    return {
+        "type": anchor_type,
+        "distance": distance,
+        "genes": selected,
+        "gene_locations": locations,
+    }
+
+
+def annotateLoopToGenesAxisAware(loops, genes, fout, pdis=2000, cpu=1):
+    """Annotate cis/trans loop anchors in their respective chromosomes.
+
+    Unlike :func:`annotateLoopToGenes`, this function never reuses one
+    chromosome's TSS index for both anchors.  ``cpu`` is retained in the public
+    signature for symmetry with the historical API; stable, lightweight TSS
+    searches are performed in the current process.
+    """
+    del cpu
+    print("Annotating loop anchors against chromosome-specific TSSs.")
+    rows = {}
+    for loop in _iter_loops(loops):
+        if loop.id in rows:
+            raise ValueError("duplicate loop id %r" % loop.id)
+        anchor_a = _annotate_anchor_axis(
+            genes, loop.chromX, loop.x_start, loop.x_end, pdis)
+        anchor_b = _annotate_anchor_axis(
+            genes, loop.chromY, loop.y_start, loop.y_end, pdis)
+        rows[loop.id] = {
+            "chromAnchorA": loop.chromX,
+            "chromAnchorB": loop.chromY,
+            "loopCategory": "cis" if loop.cis else "trans",
+            "typeAnchorA": anchor_a["type"],
+            "typeAnchorB": anchor_b["type"],
+            "nearestDistanceToGeneAnchorA": anchor_a["distance"],
+            "nearestDistanceToGeneAnchorB": anchor_b["distance"],
+            "nearestTargetGeneAnchorA": anchor_a["gene_locations"],
+            "nearestTargetGeneAnchorB": anchor_b["gene_locations"],
+        }
+
+    columns = [
+        "chromAnchorA", "chromAnchorB", "loopCategory", "typeAnchorA",
+        "typeAnchorB", "nearestDistanceToGeneAnchorA",
+        "nearestDistanceToGeneAnchorB", "nearestTargetGeneAnchorA",
+        "nearestTargetGeneAnchorB",
+    ]
+    result = pd.DataFrame.from_dict(rows, orient="index", columns=columns)
+    output = fout + "_LoopsGtfAno.txt"
+    result.to_csv(output, sep="\t", index_label="loopId")
+    return output
 
 
 def stichAnchors(chrom, loops, margin=1):
@@ -459,6 +562,183 @@ def getNetworksFromLoops(loops, genes, fout, pdis=2000, gap=1, cpu=1):
             ]
             fo.write("\t".join(line) + "\n")
 
+
+def _merge_axis_anchors(loops, gap):
+    """Merge anchors independently within each chromosome."""
+    intervals = defaultdict(list)
+    for loop in _iter_loops(loops):
+        intervals[loop.chromX].append((int(loop.x_start), int(loop.x_end)))
+        intervals[loop.chromY].append((int(loop.y_start), int(loop.y_end)))
+
+    merged = {}
+    for chrom in sorted(intervals):
+        current = []
+        for start, end in sorted(intervals[chrom]):
+            if start > end:
+                raise ValueError("anchor start exceeds end on %s" % chrom)
+            if not current or start - current[-1][1] > int(gap):
+                current.append([start, end])
+            else:
+                current[-1][1] = max(current[-1][1], end)
+        merged[chrom] = current
+    return merged
+
+
+def _anchor_node_for_interval(anchor_nodes, chrom, start, end):
+    candidates = []
+    for node, record in anchor_nodes.get(chrom, []):
+        overlap = min(int(end), record["end"]) - max(int(start),
+                                                       record["start"]) + 1
+        if overlap > 0:
+            candidates.append((-overlap, record["start"], record["end"], node))
+    if not candidates:
+        raise ValueError("no merged anchor covers %s:%s-%s" %
+                         (chrom, start, end))
+    candidates.sort()
+    return candidates[0][-1]
+
+
+def _stable_hub(graph, nodes):
+    nodes = sorted(nodes)
+    if len(nodes) < 2:
+        return ""
+    ranked = sorted(nodes, key=lambda node: (-graph.degree(node), node))
+    return ranked[0]
+
+
+def getNetworksFromLoopsAxisAware(loops, genes, fout, pdis=2000, gap=1,
+                                  cpu=1):
+    """Build one genome-wide cis/trans enhancer-promoter graph.
+
+    Nodes always include their chromosome.  A trans loop therefore becomes a
+    genuine edge between two chromosome-specific anchor nodes instead of being
+    projected into one coordinate system.  The historical cis network API and
+    files remain unchanged when ``anaLoops(mode='cis')`` is used.
+    """
+    del cpu
+    print("Merging chromosome-specific anchors and building an axis-aware network.")
+    loop_list = _iter_loops(loops)
+    merged = _merge_axis_anchors(loop_list, gap)
+    anchors = {}
+    by_chrom = defaultdict(list)
+    for chrom in sorted(merged):
+        for start, end in merged[chrom]:
+            annotation = _annotate_anchor_axis(
+                genes, chrom, start, end, pdis)
+            node = "%s:%s-%s|%s" % (
+                chrom, start, end, annotation["type"])
+            record = {
+                "chrom": chrom,
+                "start": start,
+                "end": end,
+                "type": annotation["type"],
+                "nearestDistanceToTSS": annotation["distance"],
+                "nearestGene": ",".join(
+                    gene.name for gene in annotation["genes"]),
+                "nearestGeneLoc": annotation["gene_locations"],
+            }
+            anchors[node] = record
+            by_chrom[chrom].append((node, record))
+
+    graph = nx.Graph()
+    graph.add_nodes_from(sorted(anchors))
+    loop_annotations = {}
+    edge_loops = defaultdict(list)
+    edge_categories = defaultdict(set)
+    for loop in loop_list:
+        source = _anchor_node_for_interval(
+            by_chrom, loop.chromX, loop.x_start, loop.x_end)
+        target = _anchor_node_for_interval(
+            by_chrom, loop.chromY, loop.y_start, loop.y_end)
+        category = "cis" if loop.cis else "trans"
+        relationship = "-".join(sorted((anchors[source]["type"],
+                                          anchors[target]["type"])))
+        edge_type = "%s:%s" % (category, relationship)
+        loop_annotations[loop.id] = {
+            "mergedAnchorA": source,
+            "mergedAnchorB": target,
+            "edgeType": edge_type,
+        }
+        if source == target:
+            continue
+        edge = tuple(sorted((source, target)))
+        edge_loops[edge].append(str(loop.id))
+        edge_categories[edge].add(edge_type)
+        graph.add_edge(*edge)
+
+    targets = {}
+    for promoter in sorted(graph.nodes):
+        if anchors[promoter]["type"] != "Promoter":
+            continue
+        direct_enhancer, indirect_enhancer = set(), set()
+        direct_promoter, indirect_promoter = set(), set()
+        paths = nx.single_source_shortest_path(graph, promoter)
+        for node, path in sorted(paths.items()):
+            if node == promoter:
+                continue
+            direct = len(path) == 2
+            if anchors[node]["type"] == "Promoter":
+                (direct_promoter if direct else indirect_promoter).add(node)
+            elif anchors[node]["type"] == "Enhancer":
+                (direct_enhancer if direct else indirect_enhancer).add(node)
+        targets[promoter] = {
+            "targetGene": anchors[promoter]["nearestGeneLoc"],
+            "directEnhancer": direct_enhancer,
+            "indirectEnhancer": indirect_enhancer,
+            "directPromoter": direct_promoter,
+            "indirectPromoter": indirect_promoter,
+            "directEnhancerHub": _stable_hub(graph, direct_enhancer),
+            "indirectEnhancerHub": _stable_hub(graph, indirect_enhancer),
+        }
+
+    anchor_columns = [
+        "chrom", "start", "end", "type", "nearestDistanceToTSS",
+        "nearestGene", "nearestGeneLoc",
+    ]
+    anchor_frame = pd.DataFrame.from_dict(
+        anchors, orient="index", columns=anchor_columns)
+    anchor_frame.to_csv(fout + "_mergedAnchors.txt", sep="\t",
+                        index_label="anchor")
+    with open(fout + "_mergedAnchors.bed", "w") as handle:
+        for node in sorted(anchors):
+            record = anchors[node]
+            handle.write("%s\t%s\t%s\t%s\n" % (
+                record["chrom"], record["start"], record["end"], node))
+
+    annotation_columns = ["mergedAnchorA", "mergedAnchorB", "edgeType"]
+    pd.DataFrame.from_dict(
+        loop_annotations, orient="index", columns=annotation_columns).to_csv(
+            fout + "_loop2anchors.txt", sep="\t", index_label="loopId")
+
+    with open(fout + "_ep_net.sif", "w") as sif, open(
+            fout + "_ep_net_edges.txt", "w") as edge_output:
+        edge_output.write("sourceAnchor\tedgeType\ttargetAnchor\tloopIds\n")
+        for source, target in sorted(edge_loops):
+            edge_type = ",".join(sorted(edge_categories[(source, target)]))
+            loop_ids = ",".join(sorted(edge_loops[(source, target)]))
+            sif.write("%s\t%s\t%s\n" % (source, edge_type, target))
+            edge_output.write("%s\t%s\t%s\t%s\n" %
+                              (source, edge_type, target, loop_ids))
+
+    with open(fout + "_targets.txt", "w") as handle:
+        columns = [
+            "Promoter", "PromoterTarget", "directEnhancer",
+            "indirectEnhancer", "directPromoter", "indirectPromoter",
+            "directEnhancerHub", "indirectEnhancerHub",
+        ]
+        handle.write("\t".join(columns) + "\n")
+        for promoter in sorted(targets):
+            target = targets[promoter]
+            handle.write("\t".join([
+                promoter, target["targetGene"],
+                ",".join(sorted(target["directEnhancer"])),
+                ",".join(sorted(target["indirectEnhancer"])),
+                ",".join(sorted(target["directPromoter"])),
+                ",".join(sorted(target["indirectPromoter"])),
+                target["directEnhancerHub"], target["indirectEnhancerHub"],
+            ]) + "\n")
+    return anchors, loop_annotations, graph, targets
+
 ### annotate loops
 def anaLoops(loopf,
              fout,
@@ -467,7 +747,8 @@ def anaLoops(loopf,
              pdis=2000,
              net=False,
              gap=1,
-             cpu=1):
+             cpu=1,
+             mode="cis"):
     """
     Analyze loops.
     @param loopf: str, name of loops file,  _loops.txt or _dloops.txt file
@@ -479,28 +760,38 @@ def anaLoops(loopf,
     @param gap: int, gap for merge anchors
     @param cpu: int, number of CPU to run analysis
     """
-    loops = parseTxt2Loops(loopf, cut=0)
-    #only annotate cis loops
-    nloops = {}
-    for key in loops.keys():
-        nk = key.split("-")
-        if nk[0] != nk[1]:
-            continue
-        nloops[nk[0]] = loops[key]
-    loops = nloops
+    if mode not in ("cis", "trans", "all"):
+        raise ValueError("mode must be cis, trans, or all")
+    loops = parseTxt2Loops(loopf, cut=0, mode=mode)
+    if mode == "cis":
+        # Preserve the historical cis-only structure and implementation.
+        nloops = {}
+        for key in loops.keys():
+            nk = key.split("-")
+            if nk[0] != nk[1]:
+                continue
+            nloops[nk[0]] = loops[key]
+        loops = nloops
     if gtf is not None and gtf != "":
         if not os.path.isfile(gtf):
             print("Input %s not exists, continue to other analysis." % gtf)
         else:
             #gene annotions, {chrom:{tss:g}}, tss is int
             genes = readGenes(gtf, tid=tid)
-            anf = annotateLoopToGenes(loops, genes, fout, pdis=pdis, cpu=cpu)
+            if mode == "cis":
+                annotateLoopToGenes(loops, genes, fout, pdis=pdis, cpu=cpu)
+            else:
+                annotateLoopToGenesAxisAware(
+                    loops, genes, fout, pdis=pdis, cpu=cpu)
             #get common summary of interaction type summary and distance summary
             if net:
-                getNetworksFromLoops(loops,
-                                     genes,
-                                     fout,
-                                     pdis=pdis,
-                                     gap=gap,
-                                     cpu=cpu)
-
+                if mode == "cis":
+                    getNetworksFromLoops(loops,
+                                         genes,
+                                         fout,
+                                         pdis=pdis,
+                                         gap=gap,
+                                         cpu=cpu)
+                else:
+                    getNetworksFromLoopsAxisAware(
+                        loops, genes, fout, pdis=pdis, gap=gap, cpu=cpu)

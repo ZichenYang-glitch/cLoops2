@@ -22,19 +22,110 @@ import os
 import gzip 
 import json
 import random
+import subprocess
 from glob import glob
 
 #3rd library
 import numpy as np
 import pandas as pd
+import joblib
 from tqdm import tqdm
 
 #cLoops2
 from cLoops2.ds import XY
 from cLoops2.io import parseIxy
-from cLoops2.cmat import getObsMat, getExpMat, getVirtual4CSig
+from cLoops2.cmat import (getObsMat, getExpMat, getVirtual4CSig,
+                          getTransObsMat, getTransObsMatCOO)
 from cLoops2.utils import isTool, callSys
 from cLoops2.settings import *
+
+
+def _dump_record_axes(category, key, entry):
+    chrom_x = entry.get("chromX") or entry.get("chrom_x")
+    chrom_y = entry.get("chromY") or entry.get("chrom_y")
+    if chrom_x is None or chrom_y is None:
+        fields = str(key).split("-")
+        if len(fields) != 2:
+            raise ValueError(
+                "record %s:%s requires structured chromX/chromY metadata" %
+                (category, key))
+        chrom_x, chrom_y = fields
+    chrom_x, chrom_y = str(chrom_x), str(chrom_y)
+    if (category == "cis") != (chrom_x == chrom_y):
+        raise ValueError("metadata category and chromosome axes disagree")
+    return chrom_x, chrom_y
+
+
+def _select_dump_records(directory, mode):
+    """Return stable structured records without decoding chromosome basenames."""
+    if mode not in ("cis", "trans", "all"):
+        raise ValueError("mode must be cis, trans, or all")
+    with open(os.path.join(directory, "petMeta.json")) as handle:
+        meta = json.load(handle)
+    records = []
+    categories = (("cis", "trans") if mode == "all" else (mode,))
+    for category in categories:
+        entries = meta.get("data", {}).get(category, {})
+        if not isinstance(entries, dict):
+            raise ValueError("petMeta data.%s must be an object" % category)
+        for key in sorted(entries):
+            entry = entries[key]
+            if not isinstance(entry, dict) or not entry.get("ixy"):
+                raise ValueError("metadata record %s:%s has no ixy" %
+                                 (category, key))
+            path = str(entry["ixy"])
+            if not os.path.isabs(path) and not os.path.exists(path):
+                path = os.path.join(directory, path)
+            chrom_x, chrom_y = _dump_record_axes(category, key, entry)
+            records.append((category, str(key), chrom_x, chrom_y, path))
+    if not records:
+        raise ValueError("no %s PET records are available for export" % mode)
+    return records
+
+
+def _load_dump_record(record, cut=0, mcut=-1):
+    category, key, chrom_x, chrom_y, path = record
+    try:
+        matrix = joblib.load(path, mmap_mode="r")
+    except Exception:
+        matrix = joblib.load(path)
+    if (not isinstance(matrix, np.ndarray) or matrix.ndim != 2 or
+            matrix.shape[1] != 2):
+        raise ValueError("ixy %s must have shape (n, 2)" % path)
+    # Genomic distance is undefined across chromosomes.  cut/mcut remain the
+    # historical cis filters and are deliberately ignored for trans records.
+    if category == "cis" and (cut > 0 or mcut > 0):
+        distance = matrix[:, 1] - matrix[:, 0]
+        keep = np.ones(matrix.shape[0], dtype=bool)
+        if cut > 0:
+            keep &= distance >= cut
+        if mcut > 0:
+            keep &= distance <= mcut
+        matrix = matrix[keep, :]
+    return chrom_x, chrom_y, matrix
+
+
+def _iter_bidirectional_intervals(records, cut=0, mcut=-1, ext=50):
+    """Yield both browser-query directions with chromosomes swapped too."""
+    for record in records:
+        chrom_x, chrom_y, matrix = _load_dump_record(
+            record, cut=cut, mcut=mcut)
+        for x, y in matrix:
+            x, y = int(x), int(y)
+            xa, xb = max(0, x - ext), x + ext
+            ya, yb = max(0, y - ext), y + ext
+            yield chrom_x, xa, xb, chrom_y, ya, yb
+            yield chrom_y, ya, yb, chrom_x, xa, xb
+
+
+def _sort_bed_like(source, destination):
+    """Disk-backed stable coordinate sort used before bgzip/bigBed tools."""
+    environment = os.environ.copy()
+    environment["LC_ALL"] = "C"
+    with open(destination, "w") as output:
+        subprocess.run(
+            ["sort", "-k1,1", "-k2,2n", "-k3,3n", source],
+            stdout=output, check=True, env=environment)
 
 def ixy2bed(
             d, 
@@ -43,6 +134,7 @@ def ixy2bed(
             cut=0, 
             mcut=-1,
             ext=50,
+            mode="cis",
     ):
     """
     Convert PETs to sorted BED file.
@@ -62,27 +154,18 @@ def ixy2bed(
         return
 
     logger.info("Converting %s to BED file." % d)
-    fs = glob(d + "/*.ixy")
-    nfs = []
-    for f in fs:
-        chrom = f.split("/")[-1].split(".ixy")[0].split("-")
-        if chrom[0] == chrom[1]:
-            nfs.append(f)
-    fs = nfs
-    fs.sort()  #sort as bed files requries lexicograhic
-    i = 0
+    records = _select_dump_records(d, mode)
     with gzip.open(fout, "wt") as f:
-        for fin in fs:
-            print("converting %s" % fin)
-            key, mat = parseIxy(fin, cut=cut,mcut=mcut)
-            s = list(mat[:,0])
-            s.extend( list(mat[:,1]) )
-            del mat
-            s = np.array(list(set(s)))
-            s.sort()
-            for t in tqdm(s):
-                line = [key[0], max([0, t - ext]), t + ext]
-                f.write("\t".join(map(str, line)) + "\n")
+        for record in records:
+            chrom_x, chrom_y, mat = _load_dump_record(
+                record, cut=cut, mcut=mcut)
+            axes = ((chrom_x, mat[:, 0]), (chrom_y, mat[:, 1]))
+            if chrom_x == chrom_y:
+                axes = ((chrom_x, np.concatenate((mat[:, 0], mat[:, 1]))),)
+            for chrom, values in axes:
+                for coordinate in tqdm(np.unique(values)):
+                    line = [chrom, max(0, coordinate - ext), coordinate + ext]
+                    f.write("\t".join(map(str, line)) + "\n")
     logger.info("Converting to BED file %s finished." % fout)
 
 
@@ -93,6 +176,7 @@ def ixy2bedpe(
             cut=0, 
             mcut=-1,
             ext=50,
+            mode="cis",
     ):
     """
     Convert PETs to BEDPE file.
@@ -112,22 +196,15 @@ def ixy2bedpe(
         return
 
     logger.info("Converting %s to BEDPE file." % d)
-    fs = glob(d + "/*.ixy")
-    nfs = []
-    for f in fs:
-        chrom = f.split("/")[-1].split(".ixy")[0].split("-")
-        if chrom[0] == chrom[1]:
-            nfs.append(f)
-    fs = nfs
-    fs.sort()  #sort as bed files requries lexicograhic
+    records = _select_dump_records(d, mode)
     i = 0
     with gzip.open(fout, "wt") as f:
-        for fin in fs:
-            print("converting %s" % fin)
-            key, mat = parseIxy(fin, cut=cut,mcut=mcut)
+        for record in records:
+            chrom_x, chrom_y, mat = _load_dump_record(
+                record, cut=cut, mcut=mcut)
             for t in tqdm(mat):
-                a = (key[0], max([0, t[0] - ext]), t[0] + ext)
-                b = (key[1], max([0, t[1] - ext]), t[1] + ext)
+                a = (chrom_x, max([0, t[0] - ext]), t[0] + ext)
+                b = (chrom_y, max([0, t[1] - ext]), t[1] + ext)
                 line = [
                     a[0], a[1], a[2],
                     b[0], b[1], b[2], 
@@ -197,6 +274,7 @@ def ixy2washU(
             cut=0, 
             mcut=-1,
             ext=50,
+            mode="cis",
     ):
     """
     Convert PETs to washU long range interactions. 
@@ -223,34 +301,19 @@ def ixy2washU(
         return
 
     logger.info("Converting %s to washU track." % d)
-    fs = glob(d + "/*.ixy")
-    nfs = []
-    for f in fs:
-        chrom = f.split("/")[-1].split(".ixy")[0].split("-")
-        if chrom[0] == chrom[1]:
-            nfs.append(f)
-    fs = nfs
-    fs.sort()  #sort as bed files requries lexicograhic
+    records = _select_dump_records(d, mode)
     i = 0
-    with open(fout, "w") as f:
-        for fin in fs:
-            print("converting %s" % fin)
-            key, mat = parseIxy(fin, cut=cut,mcut=mcut)
-            #duplicate mat and swap column, for convient of sorting
-            mat2 = np.copy(mat)
-            mat2[:, [0, 1]] = mat2[:, [1, 0]]
-            mat = np.concatenate((mat, mat2), axis=0)
-            inds = np.argsort(mat[:, 0])
-            mat = mat[inds, :]
-            for t in tqdm(mat):
-                a = (key[0], max([0, t[0] - ext]), t[0] + ext)
-                b = (key[1], max([0, t[1] - ext]), t[1] + ext)
-                line = [
-                    a[0], a[1], a[2],
-                    "%s:%s-%s,1" % (b[0], b[1], b[2]), i, "."
-                ]
-                f.write("\t".join(map(str, line)) + "\n")
-                i += 1
+    unsorted = fout + ".unsorted"
+    with open(unsorted, "w") as f:
+        for a_chrom, a_start, a_end, b_chrom, b_start, b_end in \
+                _iter_bidirectional_intervals(
+                    records, cut=cut, mcut=mcut, ext=ext):
+            line = [a_chrom, a_start, a_end,
+                    "%s:%s-%s,1" % (b_chrom, b_start, b_end), i, "."]
+            f.write("\t".join(map(str, line)) + "\n")
+            i += 1
+    _sort_bed_like(unsorted, fout)
+    os.unlink(unsorted)
     c1 = "bgzip %s" % fout
     c2 = "tabix -p bed %s.gz" % fout
     callSys([c1, c2])
@@ -266,6 +329,7 @@ def ixy2ucsc(
             cut=0, 
             mcut=-1,
             ext=50,
+            mode="cis",
     ):
     """
     Convert PETs to UCSC bigInteract track. 
@@ -288,7 +352,7 @@ def ixy2ucsc(
     if not os.path.exists(d):
         logger.error("%s not exists. return." % d)
         return
-    if not os.path.exists(d):
+    if not os.path.exists(chromSizeF):
         logger.error("%s not exists. return." % chromSizeF)
         return
     if os.path.isfile(fout+".bb"):
@@ -324,36 +388,20 @@ table interact
         fo.write(fildes)
 
     logger.info("Converting %s to UCSC track." % d)
-    fs = glob(d + "/*.ixy")
-    nfs = []
-    for f in fs:
-        chrom = f.split("/")[-1].split(".ixy")[0].split("-")
-        if chrom[0] == chrom[1]:
-            nfs.append(f)
-    fs = nfs
-    fs.sort()  #sort as bed files requries lexicograhic
+    records = _select_dump_records(d, mode)
     i = 0
-    with open(fout+".tmp.bed", "w") as f:
-        for fin in fs:
-            print("converting %s" % fin)
-            key, mat = parseIxy(fin, cut=cut,mcut=mcut)
-            #duplicate mat and swap column, for convient of sorting
-            mat2 = np.copy(mat)
-            mat2[:, [0, 1]] = mat2[:, [1, 0]]
-            mat = np.concatenate((mat, mat2), axis=0)
-            inds = np.argsort(mat[:, 0])
-            mat = mat[inds, :]
-            for t in tqdm(mat):
-                a = (key[0], max([0, t[0] - ext]), t[0] + ext)
-                b = (key[1], max([0, t[1] - ext]), t[1] + ext)
-                line = [
-                    a[0], a[1], a[2],
-                    ".",1,1,".",0,
-                    a[0], a[1], a[2],".",".",
-                    b[0], b[1], b[2], ".",".",
-                ]
-                f.write("\t".join(map(str, line)) + "\n")
-                i += 1
+    unsorted = fout + ".tmp.unsorted.bed"
+    with open(unsorted, "w") as f:
+        for a_chrom, a_start, a_end, b_chrom, b_start, b_end in \
+                _iter_bidirectional_intervals(
+                    records, cut=cut, mcut=mcut, ext=ext):
+            line = [a_chrom, a_start, a_end, ".", 1, 1, ".", 0,
+                    a_chrom, a_start, a_end, ".", ".",
+                    b_chrom, b_start, b_end, ".", "."]
+            f.write("\t".join(map(str, line)) + "\n")
+            i += 1
+    _sort_bed_like(unsorted, fout + ".tmp.bed")
+    os.unlink(unsorted)
     c1 = "bedToBigBed -tab -as=%s.tmp.as -type=bed5+13 %s.tmp.bed %s %s.bb"%( fout,fout,chromSizeF,fout )
     c2 = "rm %s.tmp.bed %s.tmp.as"%(fout,fout)
     callSys([c1,c2])
@@ -532,6 +580,137 @@ def ixy2mat(
     logger.info("Converting to contact matrix txt %s_cmat.txt finished." % fout)
 
 
+def ixy2transmat(
+        d,
+        fout,
+        logger,
+        chrom="",
+        x_start=-1,
+        x_end=-1,
+        y_start=-1,
+        y_end=-1,
+        x_res=5000,
+        y_res=None,
+        method="obs",
+        log=False,
+        sparse=False,
+        max_dense_cells=10000000,
+):
+    """Export a directional ``chromX bins x chromY bins`` trans matrix.
+
+    ``pair_oe`` uses endpoint marginals from the complete chromosome-pair
+    file, whereas ``window_oe`` conditions on the selected rectangular
+    window.  These are different estimands and are named explicitly.  Sparse
+    output currently represents observed counts and is suitable for a full
+    chromosome pair; dense output is bounded before allocation.
+    """
+    if method not in ("obs", "pair_oe", "window_oe"):
+        raise ValueError("trans matrix method must be obs, pair_oe, or window_oe")
+    if sparse and log:
+        raise ValueError(
+            "-log is not supported for sparse trans COO output; transform "
+            "the explicit count column downstream")
+    if y_res is None:
+        y_res = x_res
+    meta_path = os.path.join(d, "petMeta.json")
+    with open(meta_path) as handle:
+        meta = json.load(handle)
+    entry = meta.get("data", {}).get("trans", {}).get(chrom)
+    if not isinstance(entry, dict) or not entry.get("ixy"):
+        raise ValueError(
+            "trans chromosome pair %r is not present in petMeta.json" % chrom)
+    chrom_x = entry.get("chromX")
+    chrom_y = entry.get("chromY")
+    if chrom_x is None or chrom_y is None:
+        axes = chrom.split("-")
+        if len(axes) != 2:
+            raise ValueError("ambiguous trans pair; chromX/chromY are required")
+        chrom_x, chrom_y = axes
+    try:
+        xy = joblib.load(entry["ixy"], mmap_mode="r")
+    except Exception:
+        xy = joblib.load(entry["ixy"])
+    if (not isinstance(xy, np.ndarray) or xy.ndim != 2 or
+            xy.shape[1] != 2):
+        raise ValueError("trans ixy must have shape (n, 2)")
+    if xy.shape[0] == 0:
+        raise ValueError("cannot infer/export a matrix from an empty trans pair")
+    x_start = int(np.min(xy[:, 0])) if x_start == -1 else int(x_start)
+    x_end = int(np.max(xy[:, 0])) if x_end == -1 else int(x_end)
+    y_start = int(np.min(xy[:, 1])) if y_start == -1 else int(y_start)
+    y_end = int(np.max(xy[:, 1])) if y_end == -1 else int(y_end)
+
+    if sparse:
+        if method != "obs":
+            raise ValueError(
+                "sparse trans export currently supports method=obs only")
+        matrix = getTransObsMatCOO(xy, x_start, x_end, y_start, y_end,
+                                   x_res, y_res)
+        path = fout + "_trans_cmat_coo.txt"
+        with open(path, "w") as handle:
+            handle.write(
+                "rowBin\tchromX\txStart\txEnd\tcolBin\tchromY\tyStart\t"
+                "yEnd\tcount\n")
+            order = np.lexsort((matrix.col, matrix.row))
+            for position in order:
+                row = int(matrix.row[position])
+                col = int(matrix.col[position])
+                handle.write("\t".join(map(str, (
+                    row, chrom_x, x_start + row * x_res,
+                    min(x_end, x_start + (row + 1) * x_res - 1),
+                    col, chrom_y, y_start + col * y_res,
+                    min(y_end, y_start + (col + 1) * y_res - 1),
+                    int(matrix.data[position]),
+                ))) + "\n")
+        logger.info("Wrote sparse trans contact matrix to %s." % path)
+        return path
+
+    observed = getTransObsMat(
+        xy, x_start, x_end, y_start, y_end, x_res, y_res,
+        max_dense_cells=max_dense_cells)
+    matrix = observed.astype(float) if method != "obs" else observed
+    if method == "pair_oe":
+        x_bins = ((np.asarray(xy[:, 0]) - x_start) // x_res).astype(int)
+        y_bins = ((np.asarray(xy[:, 1]) - y_start) // y_res).astype(int)
+        valid_x = (np.asarray(xy[:, 0]) >= x_start) & \
+                  (np.asarray(xy[:, 0]) <= x_end)
+        valid_y = (np.asarray(xy[:, 1]) >= y_start) & \
+                  (np.asarray(xy[:, 1]) <= y_end)
+        row_marginal = np.bincount(
+            x_bins[valid_x], minlength=observed.shape[0])[:observed.shape[0]]
+        column_marginal = np.bincount(
+            y_bins[valid_y], minlength=observed.shape[1])[:observed.shape[1]]
+        expected = np.outer(row_marginal, column_marginal) / float(xy.shape[0])
+        matrix = np.divide(observed,
+                           expected,
+                           out=np.zeros_like(expected, dtype=float),
+                           where=expected > 0)
+    elif method == "window_oe":
+        total = float(observed.sum())
+        expected = (np.outer(observed.sum(axis=1), observed.sum(axis=0)) /
+                    total if total > 0 else np.zeros_like(observed,
+                                                         dtype=float))
+        matrix = np.divide(observed,
+                           expected,
+                           out=np.zeros_like(expected, dtype=float),
+                           where=expected > 0)
+    if log:
+        matrix = np.log2(np.asarray(matrix, dtype=float) + 1.0)
+    rows = ["%s:%s-%s" % (
+        chrom_x, x_start + index * x_res,
+        min(x_end, x_start + (index + 1) * x_res - 1))
+            for index in range(matrix.shape[0])]
+    columns = ["%s:%s-%s" % (
+        chrom_y, y_start + index * y_res,
+        min(y_end, y_start + (index + 1) * y_res - 1))
+               for index in range(matrix.shape[1])]
+    path = fout + "_trans_cmat.txt"
+    pd.DataFrame(matrix, index=rows, columns=columns).to_csv(
+        path, sep="\t", index_label="pos")
+    logger.info("Wrote rectangular trans contact matrix to %s." % path)
+    return path
+
+
 def ixy2virtual4C(
         d,
         fout,
@@ -597,4 +776,3 @@ def ixy2virtual4C(
             if j == len(virtual4Csig) - 1:
                 break
             i = j
-
